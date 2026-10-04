@@ -1,0 +1,22 @@
+set(Python3_FIND_IMPLEMENTATIONS CPython)
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter Development.Embed)
+
+add_library(moegram_plugins STATIC)
+add_library(moegram::plugins ALIAS moegram_plugins)
+init_target(moegram_plugins)
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/runtime.py" plugin_runtime_source)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS runtime.py)
+configure_file(runtime_source.h.in runtime_source.h @ONLY)
+
+target_sources(moegram_plugins PRIVATE plugin_host.cpp plugin_host.h)
+target_include_directories(moegram_plugins PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(moegram_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(moegram_plugins PRIVATE Python3::Python desktop-app::lib_base)
+
+option(MOEGRAM_PLUGIN_TESTS "Build the embedded plugin host smoke test" OFF)
+if (MOEGRAM_PLUGIN_TESTS)
+    add_executable(moegram_plugin_smoke tests/host_smoke.cpp)
+    init_target(moegram_plugin_smoke)
+    target_link_libraries(moegram_plugin_smoke PRIVATE moegram::plugins Qt::Core)
+endif()
