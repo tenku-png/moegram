@@ -42,10 +42,9 @@ patterns одного plugin вызывают его один раз. Remove/unl
 
 `account` — стабильный Telegram user ID MoeGram, а не Android slot.
 Android `__sdk_version__` / `__app_version__` не являются desktop version gates.
-`ui.settings.Switch(key, text, default)` — только data descriptor для
-исходного ghost_mode, без settings UI. `get_setting` сохраняет существующий
-контракт: read-only `<workdir>/plugin-settings/<id>.json` snapshot при load и
-переданный default при отсутствии ключа.
+`ghost_mode.py` использует `ui.settings.Switch(key, text, default)`.
+Native renderer, сохранение значений и текущий совместимый subset
+`ui.settings` описаны в [DEVELOPMENT.md](../DEVELOPMENT.md).
 
 ## Автоматические проверки
 

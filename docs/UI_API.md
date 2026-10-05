@@ -1,4 +1,4 @@
-# UI compatibility API (SDK 0.5.0, API 1)
+# UI compatibility API (SDK 0.6.0, API 1)
 
 The current UI slice supports message context menu items and text toasts.
 
@@ -40,5 +40,19 @@ text toast to the desktop UI thread. Menu callbacks execute on the plugin worker
 exceptions are logged and isolated. Stopping the Plugin Host removes the
 registered menu entries and rejects clicks after unload begins.
 
-This does not implement chat/profile/drawer menus, settings screens, dialogs,
-icons, subtext, conditions, arbitrary widgets, or overlay UI.
+`Settings > MoeGram Plugins` lists discovered plugins in deterministic order,
+shows each plugin's version and enabled state, and provides enable/disable and
+`Edit settings` actions. Disabling unloads the plugin and unregisters its hooks
+and menu callbacks. Enabled state is stored in
+`<workdir>/plugin-settings/.enabled.json` and persists across restarts.
+
+The settings screen uses a native desktop subset of ExteraGram's
+`ui.settings`: `Header`, `Switch`, `Input`, `Text`, and `Divider`.
+Settings values are stored per plugin ID and persist across restarts. Settings
+are editable while the plugin is enabled; disabled plugins must be enabled
+before opening their settings.
+See the settings compatibility section in [DEVELOPMENT.md](../DEVELOPMENT.md)
+for callback behavior and unsupported descriptor fields.
+
+This does not implement chat/profile/drawer menus, dialogs, Android icons,
+subtext for menu items, MVEL conditions, arbitrary widgets, or overlay UI.

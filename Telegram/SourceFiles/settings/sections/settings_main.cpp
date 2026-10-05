@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
+#include "settings/sections/settings_moegram_plugins.h"
 #include "settings/sections/settings_notifications.h"
 #include "settings/settings_power_saving.h"
 #include "settings/sections/settings_premium.h"
@@ -393,6 +394,12 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.targetSection = AyuMain::Id(),
 		.icon = { &st::menuIconPremium },
 		.keywords = { u"ayu"_q },
+	});
+	builder.addSectionButton({
+		.title = rpl::single(u"MoeGram Plugins"_q),
+		.targetSection = MoeGramPluginsId(),
+		.icon = { &st::menuIconManage },
+		.keywords = { u"moegram"_q, u"plugins"_q },
 	});
 	builder.addSkip();
 	builder.addDivider();

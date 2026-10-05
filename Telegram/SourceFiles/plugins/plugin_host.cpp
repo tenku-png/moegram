@@ -16,6 +16,7 @@
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <variant>
 
 namespace MoeGram::Plugins {
@@ -163,6 +164,174 @@ PythonObject MessagePayload(const MessageEvent &message) {
 	return valid ? std::move(payload) : PythonObject();
 }
 
+std::optional<std::vector<PluginSettings>> ReadSettingsSnapshot(
+		PyObject *object) {
+	const auto pages = PythonObject(PySequence_Fast(
+		object, "Settings pages must be a sequence"));
+	if (!pages) {
+		return std::nullopt;
+	}
+	auto result = std::vector<PluginSettings>();
+	const auto count = PySequence_Fast_GET_SIZE(pages.get());
+	const auto values = PySequence_Fast_ITEMS(pages.get());
+	for (auto i = Py_ssize_t(); i != count; ++i) {
+		const auto page = PythonObject(PySequence_Fast(
+			values[i], "Plugin settings page must be a sequence"));
+		if (!page || PySequence_Fast_GET_SIZE(page.get()) != 3) {
+			if (page) {
+				PyErr_SetString(PyExc_TypeError, "Invalid plugin settings page");
+			}
+			return std::nullopt;
+		}
+		const auto pageValues = PySequence_Fast_ITEMS(page.get());
+		const auto id = ReadPythonString(pageValues[0]);
+		const auto name = ReadPythonString(pageValues[1]);
+		const auto rows = PythonObject(PySequence_Fast(
+			pageValues[2], "Plugin settings items must be a sequence"));
+		if (!id || !name || !rows) {
+			if (!PyErr_Occurred()) {
+				PyErr_SetString(PyExc_TypeError, "Invalid plugin settings metadata");
+			}
+			return std::nullopt;
+		}
+		auto parsed = PluginSettings{
+			.id = *id,
+			.name = *name,
+		};
+		const auto rowCount = PySequence_Fast_GET_SIZE(rows.get());
+		const auto rowValues = PySequence_Fast_ITEMS(rows.get());
+		for (auto rowIndex = Py_ssize_t(); rowIndex != rowCount; ++rowIndex) {
+			const auto row = PythonObject(PySequence_Fast(
+				rowValues[rowIndex], "Plugin setting must be a sequence"));
+			if (!row || PySequence_Fast_GET_SIZE(row.get()) != 6) {
+				if (row) {
+					PyErr_SetString(PyExc_TypeError, "Invalid plugin setting row");
+				}
+				return std::nullopt;
+			}
+			const auto fields = PySequence_Fast_ITEMS(row.get());
+			const auto kind = ReadPythonString(fields[0]);
+			const auto key = ReadPythonString(fields[1]);
+			const auto text = ReadPythonString(fields[2]);
+			const auto subtext = ReadPythonString(fields[3]);
+			const auto value = ReadPythonString(fields[4]);
+			if (!kind || !key || !text || !subtext || !value) {
+				if (!PyErr_Occurred()) {
+					PyErr_SetString(PyExc_TypeError, "Invalid plugin setting text field");
+				}
+				return std::nullopt;
+			}
+			auto item = SettingItem{
+				.key = *key,
+				.text = *text,
+				.subtext = *subtext,
+				.value = *value,
+			};
+			if (*kind == u"header"_q) {
+				item.kind = SettingKind::Header;
+			} else if (*kind == u"switch"_q) {
+				if (!PyBool_Check(fields[5])) {
+					PyErr_SetString(PyExc_TypeError, "Switch setting value must be a bool");
+					return std::nullopt;
+				}
+				item.kind = SettingKind::Switch;
+				item.checked = (fields[5] == Py_True);
+			} else if (*kind == u"input"_q) {
+				item.kind = SettingKind::Input;
+			} else if (*kind == u"text"_q) {
+				item.kind = SettingKind::Text;
+			} else if (*kind == u"divider"_q) {
+				item.kind = SettingKind::Divider;
+			} else if (*kind == u"error"_q) {
+				item.kind = SettingKind::Error;
+			} else {
+				continue;
+			}
+			parsed.items.push_back(std::move(item));
+		}
+		result.push_back(std::move(parsed));
+	}
+	return result;
+}
+
+std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object) {
+	const auto entries = PythonObject(PySequence_Fast(
+		object, "Plugin list must be a sequence"));
+	if (!entries) {
+		return std::nullopt;
+	}
+	auto result = std::vector<PluginInfo>();
+	const auto count = PySequence_Fast_GET_SIZE(entries.get());
+	const auto values = PySequence_Fast_ITEMS(entries.get());
+	result.reserve(count);
+	for (auto i = Py_ssize_t(); i != count; ++i) {
+		const auto entry = PythonObject(PySequence_Fast(
+			values[i], "Plugin metadata must be a sequence"));
+		if (!entry || PySequence_Fast_GET_SIZE(entry.get()) != 5) {
+			if (entry) {
+				PyErr_SetString(PyExc_TypeError, "Invalid plugin metadata");
+			}
+			return std::nullopt;
+		}
+		const auto fields = PySequence_Fast_ITEMS(entry.get());
+		const auto id = ReadPythonString(fields[0]);
+		const auto name = ReadPythonString(fields[1]);
+		const auto version = ReadPythonString(fields[2]);
+		const auto error = ReadPythonString(fields[4]);
+		if (!id || !name || !version || !error || !PyBool_Check(fields[3])) {
+			if (!PyErr_Occurred()) {
+				PyErr_SetString(PyExc_TypeError, "Invalid plugin metadata fields");
+			}
+			return std::nullopt;
+		}
+		result.push_back({
+			.id = *id,
+			.name = *name,
+			.version = *version,
+			.error = *error,
+			.enabled = (fields[3] == Py_True),
+		});
+	}
+	return result;
+}
+
+std::optional<std::vector<MessageMenuItem>> ReadMessageMenuSnapshot(
+		PyObject *object) {
+	const auto entries = PythonObject(PySequence_Fast(
+		object, "Menu item list must be a sequence"));
+	if (!entries) {
+		return std::nullopt;
+	}
+	auto result = std::vector<MessageMenuItem>();
+	const auto count = PySequence_Fast_GET_SIZE(entries.get());
+	const auto values = PySequence_Fast_ITEMS(entries.get());
+	result.reserve(count);
+	for (auto i = Py_ssize_t(); i != count; ++i) {
+		const auto entry = PythonObject(PySequence_Fast(
+			values[i], "Menu item must be a sequence"));
+		if (!entry || PySequence_Fast_GET_SIZE(entry.get()) != 3) {
+			if (entry) {
+				PyErr_SetString(PyExc_TypeError, "Invalid menu item");
+			}
+			return std::nullopt;
+		}
+		const auto fields = PySequence_Fast_ITEMS(entry.get());
+		const auto id = ReadPythonString(fields[0]);
+		const auto text = ReadPythonString(fields[1]);
+		const auto priority = PyLong_AsLong(fields[2]);
+		if (!id || !text || PyErr_Occurred()
+			|| priority < std::numeric_limits<int>::min()
+			|| priority > std::numeric_limits<int>::max()) {
+			if (!PyErr_Occurred()) {
+				PyErr_SetString(PyExc_ValueError, "Invalid menu item fields");
+			}
+			return std::nullopt;
+		}
+		result.push_back({ *id, *text, int(priority) });
+	}
+	return result;
+}
+
 }
 
 struct Host::Private {
@@ -179,12 +348,33 @@ struct Host::Private {
 		QString id;
 		MessageEvent message;
 	};
+	struct SettingsRequest {
+		SettingsCallback done;
+	};
+	struct PluginsRequest {
+		PluginsCallback done;
+	};
+	struct PluginEnabledRequest {
+		QString pluginId;
+		bool enabled = false;
+		PluginEnabledCallback done;
+	};
+	struct SettingRequest {
+		QString pluginId;
+		QString key;
+		SettingValue value;
+		SettingCallback done;
+	};
 	using Job = std::variant<
 		UpdateEvent,
 		SendRequest,
 		RequestJob,
 		RequestResultEvent,
-		MenuClickRequest>;
+		MenuClickRequest,
+		SettingsRequest,
+		PluginsRequest,
+		PluginEnabledRequest,
+		SettingRequest>;
 	Logger logger;
 	ToastCallback toastCallback;
 	QThread *owner = QThread::currentThread();
@@ -364,7 +554,7 @@ bool Host::start(const QString &directory) {
 					_private->ready.wait(lock, [this] {
 						return !_private->accepting || !_private->queue.empty();
 					});
-					if (!_private->accepting) {
+					if (!_private->accepting && _private->queue.empty()) {
 						break;
 					}
 					job = std::move(_private->queue.front());
@@ -391,6 +581,162 @@ bool Host::start(const QString &directory) {
 						}
 					}
 					PyGILState_Release(gil);
+					continue;
+				}
+				if (auto settings = std::get_if<Private::SettingsRequest>(&job)) {
+					auto pages = std::optional<std::vector<PluginSettings>>();
+					{
+						const auto result = PythonObject(PyObject_CallMethod(
+							_private->manager, "settings_snapshot", nullptr));
+						if (result) {
+							pages = ReadSettingsSnapshot(result.get());
+						}
+						if (!pages) {
+							_private->logger(u"Plugin Host: settings snapshot failed: %1"_q
+								.arg(TakePythonError()));
+							pages.emplace();
+						}
+					}
+					PyGILState_Release(gil);
+					QMetaObject::invokeMethod(_private->delivery.get(),
+						[done = std::move(settings->done),
+							pages = std::move(*pages)]() mutable {
+							if (done) {
+								done(std::move(pages));
+							}
+						}, Qt::QueuedConnection);
+					continue;
+				}
+				if (auto plugins = std::get_if<Private::PluginsRequest>(&job)) {
+					auto snapshot = std::optional<std::vector<PluginInfo>>();
+					{
+						const auto result = PythonObject(PyObject_CallMethod(
+							_private->manager, "plugins_snapshot", nullptr));
+						if (result) {
+							snapshot = ReadPluginsSnapshot(result.get());
+						}
+						if (!snapshot) {
+							_private->logger(u"Plugin Host: plugin list failed: %1"_q
+								.arg(TakePythonError()));
+							snapshot.emplace();
+						}
+					}
+					PyGILState_Release(gil);
+					QMetaObject::invokeMethod(_private->delivery.get(),
+						[done = std::move(plugins->done),
+							plugins = std::move(*snapshot)]() mutable {
+							if (done) {
+								done(std::move(plugins));
+							}
+						}, Qt::QueuedConnection);
+					continue;
+				}
+				if (auto plugin = std::get_if<Private::PluginEnabledRequest>(&job)) {
+					auto changed = false;
+					auto plugins = std::optional<std::vector<PluginInfo>>();
+					auto menuItems = std::optional<std::vector<MessageMenuItem>>();
+					{
+						const auto idBytes = plugin->pluginId.toUtf8();
+						const auto id = PythonObject(PyUnicode_DecodeUTF8(
+							idBytes.constData(), idBytes.size(), "strict"));
+						const auto enabled = PythonObject(
+							PyBool_FromLong(plugin->enabled));
+						const auto result = (id && enabled)
+							? PythonObject(PyObject_CallMethod(
+								_private->manager,
+								"set_plugin_enabled",
+								"sO",
+								idBytes.constData(),
+								enabled.get()))
+							: PythonObject();
+						if (result) {
+							const auto truth = PyObject_IsTrue(result.get());
+							if (truth >= 0) {
+								changed = (truth != 0);
+							}
+						}
+						const auto pluginResult = PythonObject(PyObject_CallMethod(
+							_private->manager, "plugins_snapshot", nullptr));
+						if (pluginResult) {
+							plugins = ReadPluginsSnapshot(pluginResult.get());
+						}
+						const auto menuResult = PythonObject(PyObject_CallMethod(
+							_private->manager, "message_menu_items", nullptr));
+						if (menuResult) {
+							menuItems = ReadMessageMenuSnapshot(menuResult.get());
+						}
+						if (PyErr_Occurred()) {
+							_private->logger(u"Plugin Host: plugin state update failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					QMetaObject::invokeMethod(_private->delivery.get(),
+						[this,
+							done = std::move(plugin->done),
+							changed,
+							plugins = std::move(plugins),
+							menuItems = std::move(menuItems)]() mutable {
+							if (plugins && menuItems) {
+								_private->loaded = int(std::ranges::count_if(
+									*plugins,
+									[](const auto &entry) { return entry.enabled; }));
+								_private->menuItems = std::move(*menuItems);
+								if (done) {
+									done(changed, std::move(*plugins));
+								}
+							} else if (done) {
+								done(false, {});
+							}
+						}, Qt::QueuedConnection);
+					continue;
+				}
+				if (auto setting = std::get_if<Private::SettingRequest>(&job)) {
+					auto reload = false;
+					{
+						const auto pluginBytes = setting->pluginId.toUtf8();
+						const auto keyBytes = setting->key.toUtf8();
+						const auto pluginId = PythonObject(PyUnicode_DecodeUTF8(
+							pluginBytes.constData(), pluginBytes.size(), "strict"));
+						const auto key = PythonObject(PyUnicode_DecodeUTF8(
+							keyBytes.constData(), keyBytes.size(), "strict"));
+						const auto value = std::visit([](const auto &item) {
+							using Type = std::decay_t<decltype(item)>;
+							if constexpr (std::is_same_v<Type, QString>) {
+								const auto bytes = item.toUtf8();
+								return PythonObject(PyUnicode_DecodeUTF8(
+									bytes.constData(), bytes.size(), "strict"));
+							} else {
+								return PythonObject(PyBool_FromLong(item));
+							}
+						}, setting->value);
+						const auto result = (pluginId && key && value)
+							? PythonObject(PyObject_CallMethod(
+								_private->manager,
+								"update_setting",
+								"OOO",
+								pluginId.get(),
+								key.get(),
+								value.get()))
+							: PythonObject();
+						if (result) {
+							const auto truth = PyObject_IsTrue(result.get());
+							if (truth >= 0) {
+								reload = (truth != 0);
+							}
+						}
+						if (PyErr_Occurred()) {
+							_private->logger(u"Plugin Host: setting update failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					if (setting->done) {
+						QMetaObject::invokeMethod(_private->delivery.get(),
+							[done = std::move(setting->done), reload] {
+								done(reload);
+							}, Qt::QueuedConnection);
+					}
 					continue;
 				}
 				if (auto request = std::get_if<Private::RequestJob>(&job)) {
@@ -558,7 +904,13 @@ void Host::stop() {
 	{
 		const auto lock = std::lock_guard(_private->mutex);
 		_private->accepting = false;
-		_private->queue.clear();
+		auto pendingSettings = std::deque<Private::Job>();
+		for (auto &job : _private->queue) {
+			if (std::holds_alternative<Private::SettingRequest>(job)) {
+				pendingSettings.push_back(std::move(job));
+			}
+		}
+		_private->queue = std::move(pendingSettings);
 	}
 	_private->ready.notify_one();
 	if (_private->worker.joinable()) {
@@ -682,6 +1034,66 @@ bool Host::invokeMessageMenuItem(QString id, MessageEvent message) {
 	return true;
 }
 
+bool Host::requestSettings(SettingsCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || !_private->loaded || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::SettingsRequest{ std::move(done) });
+	_private->ready.notify_one();
+	return true;
+}
+
+bool Host::requestPlugins(PluginsCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::PluginsRequest{ std::move(done) });
+	_private->ready.notify_one();
+	return true;
+}
+
+bool Host::setPluginEnabled(
+		QString pluginId,
+		bool enabled,
+		PluginEnabledCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::PluginEnabledRequest{
+		std::move(pluginId),
+		enabled,
+		std::move(done),
+	});
+	_private->ready.notify_one();
+	return true;
+}
+
+bool Host::updateSetting(
+		QString pluginId,
+		QString key,
+		SettingValue value,
+		SettingCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || !_private->loaded || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::SettingRequest{
+		std::move(pluginId),
+		std::move(key),
+		std::move(value),
+		std::move(done),
+	});
+	_private->ready.notify_one();
+	return true;
+}
+
 std::vector<MessageMenuItem> MessageMenuItems() {
 	return ActiveHost ? ActiveHost->messageMenuItems()
 		: std::vector<MessageMenuItem>();
@@ -690,6 +1102,36 @@ std::vector<MessageMenuItem> MessageMenuItems() {
 bool InvokeMessageMenuItem(QString id, MessageEvent message) {
 	return ActiveHost
 		&& ActiveHost->invokeMessageMenuItem(std::move(id), std::move(message));
+}
+
+bool RequestPluginSettings(Host::SettingsCallback done) {
+	return ActiveHost && ActiveHost->requestSettings(std::move(done));
+}
+
+bool RequestPlugins(Host::PluginsCallback done) {
+	return ActiveHost && ActiveHost->requestPlugins(std::move(done));
+}
+
+bool SetPluginEnabled(
+		QString pluginId,
+		bool enabled,
+		Host::PluginEnabledCallback done) {
+	return ActiveHost && ActiveHost->setPluginEnabled(
+		std::move(pluginId),
+		enabled,
+		std::move(done));
+}
+
+bool UpdatePluginSetting(
+		QString pluginId,
+		QString key,
+		Host::SettingValue value,
+		Host::SettingCallback done) {
+	return ActiveHost && ActiveHost->updateSetting(
+		std::move(pluginId),
+		std::move(key),
+		std::move(value),
+		std::move(done));
 }
 
 bool RequestHooksEnabled() {
