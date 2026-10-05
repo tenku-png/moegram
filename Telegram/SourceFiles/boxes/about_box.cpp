@@ -55,7 +55,7 @@ rpl::producer<TextWithEntities> Text() {
 } // namespace
 
 void AboutBox(not_null<Ui::GenericBox*> box, Window::SessionController* controller) {
-	box->setTitle(rpl::single(u"AyuGram Desktop"_q));
+	box->setTitle(rpl::single(u"MoeGram Desktop"_q));
 
 	auto layout = box->verticalLayout();
 
@@ -87,6 +87,9 @@ void AboutBox(not_null<Ui::GenericBox*> box, Window::SessionController* controll
 	};
 
 	addText(Text());
+	addText(rpl::single(TextWithEntities{
+		u"MoeGram — based on AyuGram Desktop and Telegram Desktop."_q,
+	}));
 
 	box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 	box->addLeftButton(
@@ -264,4 +267,3 @@ void ArchiveHintBox(
 		box->addButton(std::move(button));
 	}
 }
-

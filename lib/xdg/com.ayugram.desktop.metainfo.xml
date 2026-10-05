@@ -3,10 +3,10 @@
     <id>com.ayugram.desktop</id>
     <metadata_license>CC0-1.0</metadata_license>
     <project_license>GPL-3.0</project_license>
-    <name>AyuGram Desktop</name>
-    <summary>Desktop version of AyuGram - ToS breaking Telegram client</summary>
+    <name>MoeGram Desktop</name>
+    <summary>MoeGram — based on AyuGram Desktop and Telegram Desktop</summary>
     <description>
-        <p>Telegram Desktop with Ghost Mode, Anti-Recall and cool design.</p>
+        <p>Native Telegram Desktop client with a Python plugin foundation, based on AyuGram Desktop and Telegram Desktop.</p>
     </description>
     <categories>
         <category>Network</category>
