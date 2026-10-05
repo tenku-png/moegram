@@ -1,5 +1,9 @@
 import ast
 import logging
+import json
+from dataclasses import dataclass
+from collections import deque
+from enum import Enum
 from pathlib import Path
 import re
 import sys
@@ -12,11 +16,165 @@ class _LogHandler(logging.Handler):
         _write_log(self.format(record))
 
 
+SDK_VERSION = "0.3.0"
+API_VERSION = 1
+
+
+@dataclass
+class Header:
+    text: str
+
+
+@dataclass
+class Input:
+    key: str
+    text: str
+    default: str = ""
+    subtext: str | None = None
+    icon: str | None = None
+
+
+@dataclass
+class Text:
+    text: str
+    subtext: str | None = None
+    icon: str | None = None
+
+
+_ui_module = types.ModuleType("ui")
+_ui_module.__path__ = []
+_settings_module = types.ModuleType("ui.settings")
+_settings_module.Header = Header
+_settings_module.Input = Input
+_settings_module.Text = Text
+_ui_module.settings = _settings_module
+sys.modules["ui"] = _ui_module
+sys.modules["ui.settings"] = _settings_module
+
+
+@dataclass
+class SendParams:
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class Message:
+    account_id: int
+    message_id: int
+    chat_id: int | None
+    sender_id: int | None
+    text: str | None
+    outgoing: bool | None
+    api_version: int = API_VERSION
+
+    @property
+    def id(self):
+        return self.message_id
+
+    @property
+    def messageText(self):
+        return self.text
+
+    @property
+    def message(self):
+        return self.text
+
+    @property
+    def out(self):
+        return self.outgoing
+
+    @property
+    def peer_id(self):
+        return _peer(self.chat_id)
+
+    @property
+    def from_id(self):
+        return _peer(self.sender_id)
+
+    def getId(self):
+        return self.message_id
+
+    def getDialogId(self):
+        return self.chat_id
+
+    def isOut(self):
+        return self.outgoing
+
+
+class HookStrategy(Enum):
+    DEFAULT = "default"
+    CANCEL = "cancel"
+    MODIFY = "modify"
+    MODIFY_FINAL = "modify_final"
+
+
+@dataclass
+class HookResult:
+    strategy: HookStrategy = HookStrategy.DEFAULT
+    request: object = None
+    response: object = None
+    update: object = None
+    updates: object = None
+    error: object = None
+    params: object = None
+
+
+@dataclass(frozen=True, slots=True)
+class Peer:
+    user_id: int = 0
+    chat_id: int = 0
+    channel_id: int = 0
+
+
+def _peer(value):
+    if value is None:
+        return None
+    if value <= -1000000000000:
+        return Peer(channel_id=-value - 1000000000000)
+    if value < 0:
+        return Peer(chat_id=-value)
+    return Peer(user_id=value)
+
+
+@dataclass(frozen=True, slots=True)
+class Update:
+    update_name: str
+    account_id: int
+    message_snapshots: tuple[Message, ...]
+    sequence: int
+    pts: int | None = None
+    pts_count: int | None = None
+    source: str = "model"
+    api_version: int = API_VERSION
+
+    @property
+    def message(self):
+        if "Delete" in self.update_name:
+            raise AttributeError("Delete update has messages, not message")
+        return self.message_snapshots[0]
+
+    @property
+    def messages(self):
+        if "Delete" not in self.update_name:
+            raise AttributeError("Message update has message, not messages")
+        return tuple(message.message_id for message in self.message_snapshots)
+
+    @property
+    def channel_id(self):
+        if self.update_name != "TL_updateDeleteChannelMessages":
+            raise AttributeError("Only channel delete update has channel_id")
+        peer = _peer(self.message_snapshots[0].chat_id)
+        return peer.channel_id if peer else 0
+
+
 class BasePlugin:
     def __init__(self):
         self.id = ""
         self.name = ""
         self.version = ""
+        self._update_hooks = {}
+        self._send_priority = None
+        self._settings = {}
         self.logger = logging.getLogger("plugin.unbound")
 
     def log(self, message):
@@ -28,9 +186,49 @@ class BasePlugin:
     def on_plugin_unload(self):
         pass
 
+    def add_on_send_message_hook(self, priority: int = 0):
+        if not isinstance(priority, int):
+            raise TypeError("Send hook priority must be an integer")
+        self._send_priority = priority
+
+    def on_send_message_hook(self, account: int, params) -> HookResult:
+        return HookResult()
+
+    def get_setting(self, key: str, default=None):
+        return self._settings.get(key, default)
+
+    def add_hook(self, name: str, match_substring: bool = False, priority: int = 0):
+        if not isinstance(name, str) or not name:
+            raise ValueError("Hook name must be a nonempty string")
+        if not isinstance(priority, int):
+            raise TypeError("Hook priority must be an integer")
+        self._update_hooks[name] = (bool(match_substring), priority)
+
+    def remove_hook(self, name: str):
+        self._update_hooks.pop(name, None)
+
+    def on_update_hook(self, update_name: str, account: int, update: Update) -> HookResult:
+        return HookResult()
+
+    def on_message(self, message: Message):
+        pass
+
+    def on_message_edit(self, message: Message):
+        pass
+
+    def on_message_delete(self, message: Message):
+        pass
+
 
 _base_module = types.ModuleType("base_plugin")
 _base_module.BasePlugin = BasePlugin
+_base_module.SDK_VERSION = SDK_VERSION
+_base_module.API_VERSION = API_VERSION
+_base_module.Message = Message
+_base_module.Update = Update
+_base_module.Peer = Peer
+_base_module.HookResult = HookResult
+_base_module.HookStrategy = HookStrategy
 sys.modules["base_plugin"] = _base_module
 
 _handler = _LogHandler()
@@ -52,7 +250,7 @@ def _metadata(tree):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id in (
-                "__id__", "__name__", "__version__"
+                "__id__", "__name__", "__version__", "__moegram_api_version__"
             ):
                 if target.id in result:
                     raise ValueError(f"Duplicate metadata: {target.id}")
@@ -68,6 +266,9 @@ def _metadata(tree):
     if "__name__" not in result:
         raise ValueError("Missing __name__ metadata")
     result.setdefault("__version__", "1.0")
+    required_api = result.get("__moegram_api_version__", "1")
+    if required_api != str(API_VERSION):
+        raise ValueError(f"Unsupported MoeGram API version: {required_api}")
     return result
 
 
@@ -75,6 +276,13 @@ class PluginHost:
     def __init__(self):
         self._loaded = []
         self._ids = set()
+        self._sequence = 0
+        self._seen = set()
+        self._recent = deque()
+        self._created = set()
+        self._created_recent = deque()
+        self._deleted = set()
+        self._deleted_recent = deque()
 
     def load(self, directory):
         for path in sorted(Path(directory).glob("*.py")):
@@ -126,6 +334,15 @@ class PluginHost:
             instance.id = plugin_id
             instance.name = metadata["__name__"]
             instance.version = metadata["__version__"]
+            instance._update_hooks = {}
+            instance._send_priority = None
+            instance._settings = {}
+            settings_path = path.parent.parent / "plugin-settings" / f"{plugin_id}.json"
+            if settings_path.is_file():
+                settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                if not isinstance(settings, dict):
+                    raise ValueError("Plugin settings must be a JSON object")
+                instance._settings = settings
             instance.logger = logging.getLogger(f"plugin.{plugin_id}")
             load_started = True
             instance.on_plugin_load()
@@ -150,9 +367,129 @@ class PluginHost:
         finally:
             sys.modules.pop(module_name, None)
 
+    def dispatch_send(self, account, message):
+        hooks = [(instance._send_priority, order, plugin_id, instance)
+                 for order, (plugin_id, _, instance) in enumerate(self._loaded)
+                 if instance._send_priority is not None]
+        hooks.sort(key=lambda hook: (-hook[0], hook[1]))
+        for _, _, plugin_id, instance in hooks:
+            params = SendParams(message)
+            try:
+                result = instance.on_send_message_hook(account, params)
+                if result is None:
+                    continue
+                if not isinstance(result, HookResult):
+                    raise TypeError("Send hook must return HookResult or None")
+                if result.strategy == HookStrategy.CANCEL:
+                    return None
+                if result.strategy == HookStrategy.DEFAULT:
+                    continue
+                if result.strategy not in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
+                    raise ValueError("Unsupported send hook strategy")
+                candidate = result.params if result.params is not None else params
+                if not isinstance(candidate, SendParams) or not isinstance(candidate.message, str):
+                    raise TypeError("Send hook params.message must remain a string")
+                candidate.message.encode("utf-8")
+                message = candidate.message
+                if result.strategy == HookStrategy.MODIFY_FINAL:
+                    break
+            except BaseException:
+                _report_failure(f"on_send_message_hook failed: {plugin_id}")
+        return message
+
+    def dispatch_update(self, name, payloads, pts=None, pts_count=None, native=False):
+        if not payloads:
+            return
+        supported = {
+            "TL_updateNewMessage": "on_message",
+            "TL_updateNewChannelMessage": "on_message",
+            "TL_updateEditMessage": "on_message_edit",
+            "TL_updateEditChannelMessage": "on_message_edit",
+            "TL_updateDeleteMessages": "on_message_delete",
+            "TL_updateDeleteChannelMessages": "on_message_delete",
+        }
+        if name not in supported:
+            raise ValueError(f"Unsupported update: {name}")
+        if native and pts is not None:
+            key = (name, pts, pts_count, tuple(
+                (p["account_id"], p["chat_id"], p["message_id"]) for p in payloads
+            ))
+            if key in self._seen:
+                return
+            self._seen.add(key)
+            self._recent.append(key)
+            if len(self._recent) > 4096:
+                self._seen.remove(self._recent.popleft())
+        if supported[name] == "on_message":
+            identity = tuple((p["account_id"], p["chat_id"], p["message_id"]) for p in payloads)
+            if identity in self._created:
+                return
+            self._created.add(identity)
+            self._created_recent.append(identity)
+            if len(self._created_recent) > 4096:
+                self._created.remove(self._created_recent.popleft())
+        delete_keys = []
+        if supported[name] == "on_message_delete":
+            for payload in payloads:
+                chat = payload["chat_id"]
+                scope = chat if chat is not None and chat <= -1000000000000 else None
+                delete_keys.append((payload["account_id"], scope, payload["message_id"]))
+            if all(key in self._deleted for key in delete_keys):
+                return
+        deliver_delete = []
+        for key in delete_keys:
+            deliver_delete.append(key not in self._deleted)
+            if key not in self._deleted:
+                self._deleted.add(key)
+                self._deleted_recent.append(key)
+                if len(self._deleted_recent) > 4096:
+                    self._deleted.remove(self._deleted_recent.popleft())
+        snapshots = tuple(Message(**payload) for payload in payloads)
+        self._sequence += 1
+        update = Update(name, snapshots[0].account_id, snapshots, self._sequence,
+                        pts, pts_count, "telegram" if native else "model")
+        hooks = []
+        for order, (plugin_id, _, instance) in enumerate(self._loaded):
+            priorities = [
+                priority for pattern, (substring, priority) in instance._update_hooks.items()
+                if (pattern in name if substring else pattern == name)
+            ]
+            if priorities:
+                hooks.append((-max(priorities), order, plugin_id, instance))
+        for _, _, plugin_id, instance in sorted(hooks, key=lambda hook: hook[:2]):
+            try:
+                result = instance.on_update_hook(name, update.account_id, update)
+                if result is not None:
+                    if not isinstance(result, HookResult):
+                        raise TypeError("on_update_hook must return HookResult or None")
+                    if result.strategy is not HookStrategy.DEFAULT:
+                        _write_log(f"Plugin Host: {plugin_id}: {result.strategy.name} "
+                                   "is unsupported for read-only update notifications")
+            except BaseException:
+                _report_failure(f"on_update_hook failed: {plugin_id}")
+        callback = supported[name]
+        for plugin_id, _, instance in self._loaded:
+            for index, message in enumerate(update.message_snapshots):
+                if delete_keys and not deliver_delete[index]:
+                    continue
+                if callback == "on_message" and message.outgoing is not False:
+                    continue
+                try:
+                    getattr(instance, callback)(message)
+                except BaseException:
+                    _report_failure(f"{callback} failed: {plugin_id}")
+
     def stop(self):
         while self._loaded:
             plugin_id, module_name, instance = self._loaded.pop()
+            instance._update_hooks.clear()
+            instance._send_priority = None
             self._unload_one(instance, module_name)
             self._ids.discard(plugin_id)
             _write_log(f"Plugin Host: unloaded {plugin_id}")
+        self._seen.clear()
+        self._recent.clear()
+        self._created.clear()
+        self._created_recent.clear()
+        self._deleted.clear()
+        self._deleted_recent.clear()

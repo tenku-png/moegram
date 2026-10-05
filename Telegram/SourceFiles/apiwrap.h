@@ -480,6 +480,9 @@ public:
 		return _fileLoader;
 	}
 private:
+	void sendMessagePrepared(
+		MessageToSend &&message,
+		std::optional<MsgId> localMessageId);
 	struct MessageDataRequest {
 		using Callbacks = std::vector<Fn<void()>>;
 

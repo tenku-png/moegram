@@ -1,6 +1,6 @@
 # Разработка MoeGram
 
-MoeGram основан на нативном AyuGram Desktop: C++ и Qt, CMake, собственный код Telegram Desktop и MTProto. Минимальный Plugin PoC встраивает CPython в процесс клиента; его контракт пока ограничен метаданными, загрузкой, выгрузкой и логированием.
+MoeGram основан на нативном AyuGram Desktop: C++ и Qt, CMake, собственный код Telegram Desktop и MTProto. Минимальный Plugin PoC встраивает CPython в процесс клиента; его контракт включает metadata, lifecycle, logging и минимальный Event API.
 
 ## Исходная база и обновление AyuGram
 
@@ -117,7 +117,7 @@ cmake --install out/arch-debug
 
 ## Минимальный embedded Plugin PoC
 
-`Telegram/SourceFiles/plugins/` собирается отдельной библиотекой `moegram_plugins`. `Core::Application::run()` запускает host после создания окна; деструктор приложения останавливает его до уничтожения сервисов. C++ `Host` владеет CPython, GIL и ссылками на runtime. `runtime.py` встраивается в бинарник при сборке и предоставляет модуль `base_plugin`, загрузчик и logging bridge в обычный журнал `log.txt` клиента. Host вызывается только на потоке приложения; между startup/shutdown GIL освобождён.
+`Telegram/SourceFiles/plugins/` собирается отдельной библиотекой `moegram_plugins`. `Core::Application::run()` запускает host после создания окна; деструктор приложения останавливает его до уничтожения сервисов. C++ `Host` владеет CPython, GIL и ссылками на runtime. `runtime.py` встраивается в бинарник при сборке и предоставляет модуль `base_plugin`, загрузчик и logging bridge в обычный журнал `log.txt` клиента. Lifecycle Host вызывается на потоке приложения; события обрабатываются на отдельном последовательном worker-потоке с GIL.
 
 Каталог плагинов — `<cWorkingDir>/plugins/`, рядом с `tdata`, но вне него. Его можно явно выбрать с `-workdir`: пример ниже использует отдельные тестовые данные и не открывает рабочий аккаунт.
 
@@ -133,9 +133,9 @@ out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -noupdate
 
 Пример — [`plugins/hello_world.py`](plugins/hello_world.py). Успешная загрузка вызывает `on_plugin_load()` ровно один раз; завершение приложения вызывает `on_plugin_unload()` в обратном порядке. При исключении в load вызывается best-effort unload для частичной очистки, экземпляр не сохраняется как загруженный. Ошибки AST/импорта/конструктора/load/unload записываются с traceback, host продолжает работу. Перехватывается `BaseException`, включая `SystemExit`, без `PyErr_Print`, способного завершить процесс.
 
-Это общий interpreter для доверенных плагинов и синхронные lifecycle-вызовы на UI-потоке. Здесь нет ограничений времени/памяти и изоляции между плагинами: бесконечный цикл блокирует клиент, `os._exit()`, native extensions или повреждение памяти могут завершить весь процесс. Потоки, фоновые задачи, зависимости pip, package imports и hot reload не входят в контракт PoC. Python имеет обычный доступ ОС к файлам и сети, хотя MoeGram не предоставляет network API. Для независимой crash isolation позже нужен другой host backend; публичные имена метаданных, `BasePlugin` и lifecycle можно сохранить.
+Это общий interpreter для доверенных плагинов и синхронные lifecycle-вызовы на UI-потоке. Здесь нет ограничений времени/памяти и изоляции между плагинами: бесконечный цикл в lifecycle блокирует клиент, `os._exit()`, native extensions или повреждение памяти могут завершить весь процесс. Потоки, фоновые задачи, зависимости pip, package imports и hot reload не входят в контракт PoC. Python имеет обычный доступ ОС к файлам и сети, хотя MoeGram не предоставляет network API. Для независимой crash isolation позже нужен другой host backend; публичные имена метаданных, `BasePlugin` и lifecycle можно сохранить.
 
-Совместимость с ExteraGram сейчас относится только к этому небольшому контракту, не к всему Android SDK. Telegram/events/UI/settings/permissions/store/storage API отсутствуют. Сопоставление API: [metadata и lifecycle ExteraGram](https://plugins.exteragram.app/docs/plugin-class), [CPython configuration](https://docs.python.org/3/c-api/init_config.html).
+Совместимость с ExteraGram сейчас относится только к этому небольшому контракту, не к всему Android SDK. Отдельные send/UI/permissions/store API отсутствуют. Узкий text send hook, settings descriptors и read-only get_setting для опубликованного hello_command описаны ниже; полной Android settings/UI системы нет. Сопоставление API: [metadata и lifecycle ExteraGram](https://plugins.exteragram.app/docs/plugin-class), [CPython configuration](https://docs.python.org/3/c-api/init_config.html).
 
 ### Проверки PoC
 
@@ -158,6 +158,68 @@ out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -quit
 При проверке shutdown обнаружен use-after-free в существующей обработке IPC `-quit`: синхронный `Quit()` закрывал приложение и очищал `_localClients`, пока `Sandbox::readClients()` ещё обращался к его итератору. Поэтому `Sandbox::execExternal()` ставит quit в Qt-очередь: обработчик успевает отправить ответ и завершить обход до teardown. Это узкое исправление lifecycle, необходимое для надёжного штатного завершения проверяемого клиента.
 
 PoC проверен на Arch Linux: Debug-сборка с Qt 6.11.2 и CPython 3.14.7, smoke-тест embedded host, реальные запуски клиента через Wayland и Qt offscreen. В обоих режимах проверены load/unload `hello_world`, намеренный `RuntimeError` в его копии, загрузка следующего плагина после ошибки и завершение через `-quit` с кодом `0`.
+
+## Минимальный Event API (SDK 0.3.0, API 1)
+
+`from base_plugin import BasePlugin, Message, SDK_VERSION, API_VERSION`. Metadata `__moegram_api_version__ = "1"` фиксирует major-контракт MoeGram; если поле отсутствует, используется API 1. Другая версия отклоняется через AST до исполнения файла. `SDK_VERSION` описывает версию desktop SDK, `API_VERSION` — совместимость DTO/callback. Несовместимые изменения требуют нового major API. Это отдельная нумерация: она не означает поддержку Android SDK ExteraGram 1.4.x; его `__sdk_version__` не является проверкой совместимости MoeGram.
+
+Ровно три уведомления: `on_message(self, message: Message)`, `on_message_edit(self, message: Message)`, `on_message_delete(self, message: Message)`. Возвращаемое значение игнорируется; события не могут менять или отменять Telegram updates.
+
+| Поле `Message` | Контракт |
+| --- | --- |
+| `api_version` | `1` |
+| `account_id` | `Main::Session::uniqueId()`: ID пользователя со сдвигом test DC; это не Android account index |
+| `message_id` | Telegram message ID; уникален в контексте аккаунта и чата |
+| `chat_id` | User: положительный ID; basic group: отрицательный ID; channel/supergroup: `-1000000000000 - id` |
+| `sender_id` | Такой же формат ID для пользователя/чата; `None`, если sender отсутствует |
+| `text` | Текст/подпись, без entities и native объектов |
+| `outgoing` | Признак исходящего сообщения |
+
+Для delete неизвестного сообщения `text`, `sender_id`, `outgoing` равны `None`. Channel delete содержит `chat_id`, даже если сообщение не загружено; non-channel delete без известного сообщения не содержит chat ID, поэтому он тоже `None`. Один callback на каждый ID в порядке серверного списка. Для известного сообщения delete содержит последнюю локальную копию текста до удаления; AyuGram может сохранить само сообщение согласно своим настройкам, но серверное удаление всё равно публикуется.
+
+`Message` — frozen dataclass со slots: только Python числа/строки/`None`, без C++ pointers, Qt wrappers или ссылок на сессию. DTO можно сохранять после возврата callback, edits создают новый snapshot. Это защита от случайной мутации, а не sandbox против намеренного вмешательства Python в runtime.
+
+Native new/edit/delete подключены через `plugins/telegram_event_adapter.cpp` в `Api::Updates::applyUpdateNoPtsCheck()`. Scoped suppression предотвращает повторную публикацию из модели. `data/data_session.cpp` сохраняет fallback для incoming short/difference и local delete responses; short sent acknowledgement нормализуется из подтверждённого server message. `on_message` по-прежнему incoming-only, compatibility hook видит оба направления. Подробный контракт, batched delete, source semantics и dedup описаны в [EVENT_API_COMPATIBILITY.md](docs/EVENT_API_COMPATIBILITY.md).
+
+C++ `Publish` вызывается на потоке приложения и отправляет DTO в FIFO очередь Host без Python/GIL. Один worker выполняет события и вызывает плагины в порядке отсортированных имён файлов. На каждый callback перехватывается `BaseException`, включая `SystemExit` и `KeyboardInterrupt`; следующий plugin продолжает получать то же событие. Очередь ограничена 4096 updates: при переполнении новое событие отклоняется, клиент пишет предупреждение. Гарантии durable/replay доставки нет.
+
+При `Host::stop()` приём закрывается, ожидающая очередь очищается, текущая доставка завершается, worker присоединяется, затем вызываются unload callbacks и финализируется CPython. После `on_plugin_unload()` событий нет; restart создаёт новый worker и пустую очередь. Selective unload/hot reload пока не предоставляется. Lifecycle остаётся на main thread, event callbacks — на worker; Python-плагинам нельзя обращаться к Qt/UI. Поток защищает основной event loop от медленного обычного callback, но доверенный embedded Python всё ещё способен завершить процесс, держать GIL, работать с ОС или зависнуть. Зависший callback задержит shutdown; безопасно убить Python thread нельзя. Crash isolation и жёсткие timeouts требуют будущего отдельного процесса.
+
+### Сопоставление с ExteraGram
+
+SDK 0.3.0 добавляет совместимую сигнатуру `on_update_hook`, регистрацию `add_hook` / `remove_hook` и `HookResult` для read-only наблюдения. Один canonical immutable Update используется hook и существующими специализированными callback. Полный список совместимости 1:1, MoeGram extensions, ограничения, smoke-тесты и статус реальной integration-проверки: [EVENT_API_COMPATIBILITY.md](docs/EVENT_API_COMPATIBILITY.md).
+
+### Smoke-тесты событий
+
+Пример: `plugins/event_logger.py`. Он логирует create/edit/delete со всеми полями; копируйте его в `<workdir>/plugins/` аналогично `hello_world.py`. Логи содержат текст сообщений, поэтому используйте собственные тестовые данные.
+
+```bash
+cmake --build out/arch-debug --target moegram_event_smoke moegram_plugin_smoke --parallel 8
+out/arch-debug/Telegram/SourceFiles/plugins/moegram_event_smoke "$PWD/plugins/event_logger.py"
+out/arch-debug/Telegram/SourceFiles/plugins/moegram_plugin_smoke
+```
+
+Event smoke подаёт синтетические DTO через настоящий C++ embedded Host: отдельно create/edit/delete, unknown delete, Unicode/NUL, сохранение snapshot, immutability, major version validation до исполнения, deterministic callback order, продолжение после RuntimeError/SystemExit/KeyboardInterrupt, работа Qt timer во время callback, очистка pending событий и запрет post после unload. Эти проверки не требуют аккаунта и не отправляют Telegram сообщения; реальную доставку сетевых updates нужно дополнительно проверять на авторизованном тестовом аккаунте.
+
+Проверено на Arch Linux: полный incremental Debug target `Telegram`, lifecycle smoke, Event smoke с настоящим `event_logger.py` (включая лимит очереди; 10 повторов прошли), запуск нового клиента через Qt offscreen и штатный `-quit` с exit code 0 в обычном сценарии и после ошибки lifecycle другого плагина. Сетевая доставка реальных create/edit/delete на авторизованном аккаунте не проверялась.
+
+## Совместимость hello_command: текстовый send hook
+
+Опубликованный исходник ExteraGram загружается без редактирования; список исходных несовместимостей и границы adapters: [HELLO_COMMAND_COMPATIBILITY.md](docs/HELLO_COMMAND_COMPATIBILITY.md).
+
+`BasePlugin.add_on_send_message_hook(priority=0)` регистрирует `on_send_message_hook(account, params)`. Перед обычной текстовой отправкой ApiWrap передаёт detached params.message на существующий Python worker; Qt loop продолжает работу. DEFAULT сохраняет текст, MODIFY применяет новый, MODIFY_FINAL завершает chain, CANCEL отменяет отправку. Exceptions отдельного hook не мешают следующим. При изменении текста прежние entities/preview очищаются. Поля SendMessageParams кроме message пока не моделируются. Из plugins нельзя самостоятельно инициировать Telegram send/request.
+
+`ui.settings` предоставляет только data descriptors Header/Input/Text для используемых keyword fields. Native settings renderer не реализован. `get_setting(key, default)` читает per-plugin JSON `<workdir>/plugin-settings/<id>.json` при load или возвращает default. Setter и management UI отсутствуют. Это storage convention MoeGram, не Android file format.
+
+```bash
+python -B Telegram/SourceFiles/plugins/tests/check_hello_command.py
+cmake --build out/arch-debug --target moegram_send_smoke --parallel 8
+out/arch-debug/Telegram/SourceFiles/plugins/moegram_send_smoke \
+  "$PWD/Telegram/SourceFiles/plugins/tests/fixtures/exteragram_hello_command/hello_command.py"
+```
+
+Smoke не отправляет Telegram сообщения. Реальная `.hello Alice` → `Hello, Alice!` требует отдельной проверки на авторизованном клиенте; её статус фиксируется в compatibility report.
+
 
 ## Структура AyuGram и Telegram Desktop
 

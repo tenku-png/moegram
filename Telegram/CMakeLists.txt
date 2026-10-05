@@ -29,6 +29,10 @@ get_filename_component(src_loc SourceFiles REALPATH)
 get_filename_component(res_loc Resources REALPATH)
 
 add_subdirectory(SourceFiles/plugins)
+target_sources(Telegram PRIVATE
+    ${src_loc}/plugins/telegram_event_adapter.cpp
+    ${src_loc}/plugins/telegram_event_adapter.h
+)
 
 include(cmake/telegram_options.cmake)
 include(cmake/lib_ffmpeg.cmake)

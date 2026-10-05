@@ -7,9 +7,20 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QThread>
+#include <QtCore/QObject>
+
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <variant>
 
 namespace MoeGram::Plugins {
 namespace {
+
+Host *ActiveHost = nullptr;
+Host::Logger *RuntimeLogger = nullptr;
+thread_local int NativeEventDepth = 0;
 
 struct PythonDeleter {
 	void operator()(PyObject *object) const {
@@ -52,14 +63,14 @@ QString TakePythonError() {
 	return result;
 }
 
-PyObject *WriteLog(PyObject *self, PyObject *args) {
+PyObject *WriteLog(PyObject *, PyObject *args) {
 	const char *message = nullptr;
 	if (!PyArg_ParseTuple(args, "s", &message)) {
 		return nullptr;
 	}
-	const auto logger = static_cast<Host::Logger*>(
-		PyCapsule_GetPointer(self, "moegram.logger"));
+	const auto logger = RuntimeLogger;
 	if (!logger) {
+		PyErr_SetString(PyExc_RuntimeError, "Plugin logging is stopped");
 		return nullptr;
 	}
 	try {
@@ -81,6 +92,12 @@ PyMethodDef LogMethod = {
 }
 
 struct Host::Private {
+	struct SendRequest {
+		quint64 accountId;
+		QString text;
+		SendCallback done;
+	};
+	using Job = std::variant<UpdateEvent, SendRequest>;
 	Logger logger;
 	QThread *owner = QThread::currentThread();
 	PyObject *runtime = nullptr;
@@ -88,6 +105,12 @@ struct Host::Private {
 	PyThreadState *threadState = nullptr;
 	bool initialized = false;
 	int loaded = 0;
+	std::mutex mutex;
+	std::condition_variable ready;
+	std::deque<Job> queue;
+	std::unique_ptr<QObject> delivery;
+	std::thread worker;
+	bool accepting = false;
 };
 
 Host::Host(Logger logger)
@@ -137,11 +160,8 @@ bool Host::start(const QString &directory) {
 	auto success = false;
 	{
 		_private->runtime = PyModule_New("_moegram_runtime");
-		const auto capsule = PythonObject(PyCapsule_New(
-			&_private->logger, "moegram.logger", nullptr));
-		const auto bridge = capsule
-			? PythonObject(PyCFunction_New(&LogMethod, capsule.get()))
-			: PythonObject();
+		RuntimeLogger = &_private->logger;
+		const auto bridge = PythonObject(PyCFunction_New(&LogMethod, nullptr));
 		const auto globals = _private->runtime
 			? PyModule_GetDict(_private->runtime)
 			: nullptr;
@@ -177,6 +197,113 @@ bool Host::start(const QString &directory) {
 	if (!success) {
 		stop();
 	}
+	if (success) {
+		_private->delivery = std::make_unique<QObject>();
+		_private->accepting = true;
+		_private->worker = std::thread([this] {
+			while (true) {
+				auto job = Private::Job(UpdateEvent());
+				{
+					auto lock = std::unique_lock(_private->mutex);
+					_private->ready.wait(lock, [this] {
+						return !_private->accepting || !_private->queue.empty();
+					});
+					if (!_private->accepting) {
+						break;
+					}
+					job = std::move(_private->queue.front());
+					_private->queue.pop_front();
+				}
+				const auto gil = PyGILState_Ensure();
+				if (auto request = std::get_if<Private::SendRequest>(&job)) {
+					auto filtered = std::optional<QString>(request->text);
+					{
+						const auto encoded = request->text.toUtf8();
+						const auto text = PythonObject(PyUnicode_DecodeUTF8(
+							encoded.constData(), encoded.size(), "strict"));
+						const auto result = text
+							? PythonObject(PyObject_CallMethod(_private->manager,
+								"dispatch_send", "KO",
+								static_cast<unsigned long long>(request->accountId), text.get()))
+							: PythonObject();
+						if (result && result.get() == Py_None) {
+							filtered = std::nullopt;
+						} else if (result && PyUnicode_Check(result.get())) {
+							auto length = Py_ssize_t();
+							const auto value = PyUnicode_AsUTF8AndSize(result.get(), &length);
+							if (value) {
+								filtered = QString::fromUtf8(value, length);
+							}
+						} else if (result) {
+							PyErr_SetString(PyExc_TypeError, "Send dispatcher must return str or None");
+						}
+						if (PyErr_Occurred()) {
+							_private->logger(u"Plugin Host: send dispatch failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					QMetaObject::invokeMethod(_private->delivery.get(),
+						[done = std::move(request->done), filtered = std::move(filtered)] {
+							done(filtered);
+						}, Qt::QueuedConnection);
+					continue;
+				}
+				const auto &event = std::get<UpdateEvent>(job);
+				{
+					const auto payloads = PythonObject(PyList_New(0));
+					auto valid = bool(payloads);
+					for (const auto &message : event.messages) {
+						const auto payload = PythonObject(PyDict_New());
+						const auto put = [&](const char *key, PythonObject value) {
+							return payload && value
+								&& PyDict_SetItemString(payload.get(), key, value.get()) == 0;
+						};
+						const auto none = [] { return PythonObject(Py_NewRef(Py_None)); };
+						const auto integer = [&](std::optional<qint64> value) {
+							return value
+								? PythonObject(PyLong_FromLongLong(*value)) : none();
+						};
+						const auto encoded = message.text.value_or(QString()).toUtf8();
+						valid = valid
+							&& put("account_id", PythonObject(
+								PyLong_FromUnsignedLongLong(event.accountId)))
+							&& put("message_id", integer(message.messageId))
+							&& put("chat_id", integer(message.chatId))
+							&& put("sender_id", integer(message.senderId))
+							&& put("text", message.text
+								? PythonObject(PyUnicode_DecodeUTF8(
+									encoded.constData(), encoded.size(), "strict"))
+								: none())
+							&& put("outgoing", message.outgoing
+								? PythonObject(PyBool_FromLong(*message.outgoing)) : none())
+							&& PyList_Append(payloads.get(), payload.get()) == 0;
+						if (!valid) {
+							break;
+						}
+					}
+					const auto pts = event.pts
+						? PythonObject(PyLong_FromLong(*event.pts))
+						: PythonObject(Py_NewRef(Py_None));
+					const auto count = event.ptsCount
+						? PythonObject(PyLong_FromLong(*event.ptsCount))
+						: PythonObject(Py_NewRef(Py_None));
+					const auto name = event.name.toUtf8();
+					const auto result = (valid && pts && count)
+						? PythonObject(PyObject_CallMethod(_private->manager,
+							"dispatch_update", "sOOOi", name.constData(), payloads.get(),
+							pts.get(), count.get(), int(event.native)))
+						: PythonObject();
+					if (!result) {
+						_private->logger(u"Plugin Host: event dispatch failed: %1"_q
+							.arg(TakePythonError()));
+					}
+				}
+				PyGILState_Release(gil);
+			}
+		});
+		ActiveHost = this;
+	}
 	return success;
 }
 
@@ -185,6 +312,19 @@ void Host::stop() {
 	if (!_private->initialized) {
 		return;
 	}
+	if (ActiveHost == this) {
+		ActiveHost = nullptr;
+	}
+	{
+		const auto lock = std::lock_guard(_private->mutex);
+		_private->accepting = false;
+		_private->queue.clear();
+	}
+	_private->ready.notify_one();
+	if (_private->worker.joinable()) {
+		_private->worker.join();
+	}
+	_private->delivery.reset();
 	PyEval_RestoreThread(_private->threadState);
 	_private->threadState = nullptr;
 	if (_private->manager) {
@@ -199,10 +339,89 @@ void Host::stop() {
 	Py_CLEAR(_private->runtime);
 	_private->loaded = 0;
 	const auto result = Py_FinalizeEx();
+	RuntimeLogger = nullptr;
 	_private->initialized = false;
 	_private->logger((result == 0)
 		? u"Plugin Host: CPython stopped"_q
 		: u"Plugin Host: CPython stopped with a finalization error"_q);
+}
+
+namespace {
+
+UpdateEvent ToUpdate(MessageEvent event) {
+	auto result = UpdateEvent();
+	result.accountId = event.accountId;
+	const auto channel = event.chatId && *event.chatId <= -1000000000000LL;
+	result.name = (event.kind == EventKind::Message)
+		? (channel ? u"TL_updateNewChannelMessage"_q : u"TL_updateNewMessage"_q)
+		: (event.kind == EventKind::Edit)
+		? (channel ? u"TL_updateEditChannelMessage"_q : u"TL_updateEditMessage"_q)
+		: (channel ? u"TL_updateDeleteChannelMessages"_q : u"TL_updateDeleteMessages"_q);
+	result.messages.push_back(std::move(event));
+	return result;
+}
+
+}
+
+bool Host::post(MessageEvent event) {
+	return post(ToUpdate(std::move(event)));
+}
+
+bool Host::post(UpdateEvent event) {
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(std::move(event));
+	_private->ready.notify_one();
+	return true;
+}
+
+bool Host::filterOutgoing(quint64 accountId, QString text, SendCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || !_private->loaded || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::SendRequest{
+		accountId, std::move(text), std::move(done) });
+	_private->ready.notify_one();
+	return true;
+}
+
+void FilterOutgoing(quint64 accountId, QString text, SendCallback done) {
+	if (!ActiveHost || !ActiveHost->filterOutgoing(accountId, text, done)) {
+		done(text);
+	}
+}
+
+NativeEventScope::NativeEventScope(bool active) : _active(active) {
+	if (_active) {
+		++NativeEventDepth;
+	}
+}
+
+NativeEventScope::~NativeEventScope() {
+	if (_active) {
+		--NativeEventDepth;
+	}
+}
+
+bool ModelEventsEnabled() {
+	return ActiveHost && !NativeEventDepth;
+}
+
+void Publish(MessageEvent event) {
+	Publish(ToUpdate(std::move(event)));
+}
+
+void Publish(UpdateEvent event) {
+	if (NativeEventDepth) {
+		return;
+	}
+	if (ActiveHost && !ActiveHost->post(std::move(event))) {
+		qWarning("Plugin Host: event queue full; update dropped");
+	}
 }
 
 int Host::loadedCount() const {

@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
 
+#include "plugins/telegram_event_adapter.h"
+
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
@@ -3150,6 +3152,17 @@ void Session::checkFormattedDateUpdates() {
 void Session::processMessagesDeleted(
 		PeerId peerId,
 		const QVector<MTPint> &data) {
+	if (MoeGram::Plugins::ModelEventsEnabled()) {
+		auto event = MoeGram::Plugins::UpdateEvent();
+		event.accountId = _session->uniqueId();
+		event.name = peerIsChannel(peerId)
+			? u"TL_updateDeleteChannelMessages"_q : u"TL_updateDeleteMessages"_q;
+		for (const auto &id : data) {
+			event.messages.push_back(MoeGram::Plugins::DeletedMessageSnapshot(
+				_session, message(peerId, id.v), id.v, peerId));
+		}
+		MoeGram::Plugins::Publish(std::move(event));
+	}
 	const auto list = messagesList(peerId);
 	const auto affected = historyLoaded(peerId);
 	if (!list && !affected) {
@@ -3187,6 +3200,16 @@ void Session::processMessagesDeleted(
 }
 
 void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
+	if (MoeGram::Plugins::ModelEventsEnabled()) {
+		auto event = MoeGram::Plugins::UpdateEvent();
+		event.accountId = _session->uniqueId();
+		event.name = u"TL_updateDeleteMessages"_q;
+		for (const auto &id : data) {
+			event.messages.push_back(MoeGram::Plugins::DeletedMessageSnapshot(
+				_session, nonChannelMessage(id.v), id.v));
+		}
+		MoeGram::Plugins::Publish(std::move(event));
+	}
 	auto toDestroy = std::vector<not_null<HistoryItem*>>();
 	auto historiesToCheck = base::flat_set<not_null<History*>>();
 	for (const auto &messageId : data) {
@@ -3411,6 +3434,14 @@ HistoryItem *Session::addNewMessage(
 	const auto peerId = PeerFromMessage(data);
 	if (!peerId || data.type() == mtpc_messageEmpty) {
 		return nullptr;
+	}
+
+	if (type == NewMessageType::Unread
+		&& data.type() == mtpc_message
+		&& IsServerMsgId(id)
+		&& !message(peerId, id)) {
+		MoeGram::Plugins::PublishModelMessage(
+			_session, MoeGram::Plugins::EventKind::Message, data);
 	}
 
 	if (type == NewMessageType::Unread

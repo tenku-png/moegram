@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_updates.h"
 
+#include "plugins/telegram_event_adapter.h"
+
 #include "api/api_authorizations.h"
 #include "api/api_user_names.h"
 #include "api/api_chat_participants.h"
@@ -1312,6 +1314,8 @@ void Updates::applyUpdatesNoPtsCheck(const MTPUpdates &updates) {
 }
 
 void Updates::applyUpdateNoPtsCheck(const MTPUpdate &update) {
+	const auto pluginScope = MoeGram::Plugins::NativeEventScope(
+		MoeGram::Plugins::ObserveTelegramUpdate(_session, update));
 	switch (update.type()) {
 	case mtpc_updateNewMessage: {
 		auto &d = update.c_updateNewMessage();
@@ -1584,6 +1588,18 @@ void Updates::applyUpdates(
 			if (const auto item = lookupMessage()) {
 				_session->data().fillMessagePeers(item->fullId(), d);
 				item->applySentMessage(sent.text, d, wasAlready);
+				if (!wasAlready) {
+					auto event = MoeGram::Plugins::MessageEvent();
+					event.accountId = _session->uniqueId();
+					event.messageId = item->id.bare;
+					event.chatId = MoeGram::Plugins::DialogId(item->history()->peer->id);
+					if (item->hasRealFromId()) {
+						event.senderId = MoeGram::Plugins::DialogId(item->from()->id);
+					}
+					event.text = item->originalText().text;
+					event.outgoing = item->out();
+					MoeGram::Plugins::Publish(std::move(event));
+				}
 			}
 		}
 

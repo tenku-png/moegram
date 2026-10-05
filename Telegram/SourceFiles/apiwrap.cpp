@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "apiwrap.h"
+#include "plugins/plugin_host.h"
 
 #include "api/api_authorizations.h"
 #include "api/api_attached_stickers.h"
@@ -4654,6 +4655,28 @@ void ApiWrap::sendRichMessage(
 }
 
 void ApiWrap::sendMessage(
+		MessageToSend &&message,
+		std::optional<MsgId> localMessageId) {
+	const auto original = message.textWithTags.text;
+	const auto pending = std::make_shared<MessageToSend>(std::move(message));
+	MoeGram::Plugins::FilterOutgoing(_session->uniqueId(), original,
+		[weak = base::make_weak(_session), pending, original, localMessageId](
+				std::optional<QString> filtered) {
+			if (!filtered) {
+				return;
+			}
+			if (const auto session = weak.get()) {
+				if (*filtered != original) {
+					pending->textWithTags.text = *filtered;
+					pending->textWithTags.tags.clear();
+					pending->webPage = {};
+				}
+				session->api().sendMessagePrepared(std::move(*pending), localMessageId);
+			}
+		});
+}
+
+void ApiWrap::sendMessagePrepared(
 		MessageToSend &&message,
 		std::optional<MsgId> localMessageId) {
 	applyGhostScheduling(_session, message.action.options);
