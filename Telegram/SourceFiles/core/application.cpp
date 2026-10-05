@@ -438,7 +438,12 @@ void Application::run() {
 	processCreatedWindow(_lastActivePrimaryWindow);
 
 	_private->pluginHost = std::make_unique<MoeGram::Plugins::Host>(
-		[](const QString &message) { LOG((message)); });
+		[](const QString &message) { LOG((message)); },
+		[this](const QString &message) {
+			if (const auto window = activeWindow()) {
+				window->showToast(message);
+			}
+		});
 	(void)_private->pluginHost->start(cWorkingDir() + u"plugins/"_q);
 
 	Test::Fire(u"launch_finished"_q);

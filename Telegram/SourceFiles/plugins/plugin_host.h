@@ -21,6 +21,12 @@ struct MessageEvent {
 	std::optional<bool> outgoing;
 };
 
+struct MessageMenuItem {
+	QString id;
+	QString text;
+	int priority = 0;
+};
+
 struct UpdateEvent {
 	QString name;
 	quint64 accountId = 0;
@@ -70,8 +76,9 @@ void Publish(RequestResultEvent event);
 class Host final {
 public:
 	using Logger = std::function<void(const QString &)>;
+	using ToastCallback = std::function<void(const QString &)>;
 
-	explicit Host(Logger logger);
+	explicit Host(Logger logger, ToastCallback toast = nullptr);
 	~Host();
 
 	Host(const Host &) = delete;
@@ -86,11 +93,18 @@ public:
 		quint64 accountId, QString text, SendCallback done);
 	[[nodiscard]] bool filterRequest(RequestEvent event, RequestCallback done);
 	[[nodiscard]] bool post(RequestResultEvent event);
+	[[nodiscard]] std::vector<MessageMenuItem> messageMenuItems() const;
+	[[nodiscard]] bool invokeMessageMenuItem(
+		QString id,
+		MessageEvent message);
 
 private:
 	struct Private;
 	const std::unique_ptr<Private> _private;
 
 };
+
+[[nodiscard]] std::vector<MessageMenuItem> MessageMenuItems();
+[[nodiscard]] bool InvokeMessageMenuItem(QString id, MessageEvent message);
 
 }

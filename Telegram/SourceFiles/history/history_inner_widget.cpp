@@ -89,6 +89,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "plugins/plugin_host.h"
+#include "plugins/telegram_event_adapter.h"
 #include "mainwidget.h"
 #include "iv/iv_rich_message_html_export.h"
 #include "menu/menu_item_download_files.h"
@@ -3038,6 +3040,14 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			|| isUponSelected == 2
 			|| isUponSelected == -2) {
 			return;
+		}
+		const auto snapshot = MoeGram::Plugins::MessageSnapshot(
+			session,
+			item);
+		for (const auto &pluginItem : MoeGram::Plugins::MessageMenuItems()) {
+			_menu->addAction(pluginItem.text, [id = pluginItem.id, snapshot] {
+				(void)MoeGram::Plugins::InvokeMessageMenuItem(id, snapshot);
+			});
 		}
 		const auto itemId = item->fullId();
 		const auto repliesCount = item->repliesCount();

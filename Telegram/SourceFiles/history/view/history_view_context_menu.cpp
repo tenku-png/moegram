@@ -100,6 +100,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "lang/lang_keys.h"
 #include "core/application.h"
+#include "plugins/plugin_host.h"
+#include "plugins/telegram_event_adapter.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -1673,6 +1675,16 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 	auto result = base::make_unique_q<Ui::PopupMenu>(
 		list,
 		st::popupMenuWithIcons);
+
+	if (item) {
+		const auto snapshot = MoeGram::Plugins::MessageSnapshot(
+			&list->session(), item);
+		for (const auto &pluginItem : MoeGram::Plugins::MessageMenuItems()) {
+			result->addAction(pluginItem.text, [id = pluginItem.id, snapshot] {
+				(void)MoeGram::Plugins::InvokeMessageMenuItem(id, snapshot);
+			});
+		}
+	}
 
 	// Build the full message menu.
 	FillContextMenuItems(result, list, request, hasPollOption);

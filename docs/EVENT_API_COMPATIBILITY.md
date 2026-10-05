@@ -1,6 +1,6 @@
 # Event API: ExteraGram compatibility и integration-проверка
 
-MoeGram SDK **0.4.0**, DTO API **1**. Контракт сверён с [ExteraGram Plugin Class](https://plugins.exteragram.app/docs/plugin-class) и официальными `base_plugin.pyi` из [SDK 1.4.5.7 stable](https://github.com/exteraSquad/plugins-pysdk-builds/releases/tag/sdk-v1.4.5.7-stable-37208006129-1), asset `stubs.zip` → `pyi-files.zip`. Stubs исследованы как декларации, код Android SDK не выполнялся и не копировался в клиент.
+MoeGram SDK **0.5.0**, DTO API **1**. Контракт сверён с [ExteraGram Plugin Class](https://plugins.exteragram.app/docs/plugin-class) и официальными `base_plugin.pyi` из [SDK 1.4.5.7 stable](https://github.com/exteraSquad/plugins-pysdk-builds/releases/tag/sdk-v1.4.5.7-stable-37208006129-1), asset `stubs.zip` → `pyi-files.zip`. Stubs исследованы как декларации, код Android SDK не выполнялся и не копировался в клиент.
 
 ## Контракт ExteraGram
 

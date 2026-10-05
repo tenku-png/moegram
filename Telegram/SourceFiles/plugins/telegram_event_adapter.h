@@ -27,5 +27,8 @@ void PublishModelMessage(
 	HistoryItem *item,
 	MsgId id,
 	PeerId peer = PeerId());
+[[nodiscard]] MessageEvent MessageSnapshot(
+	not_null<Main::Session*> session,
+	not_null<HistoryItem*> item);
 
 }
