@@ -97,7 +97,11 @@ struct Host::Private {
 		QString text;
 		SendCallback done;
 	};
-	using Job = std::variant<UpdateEvent, SendRequest>;
+	struct RequestJob {
+		RequestEvent event;
+		RequestCallback done;
+	};
+	using Job = std::variant<UpdateEvent, SendRequest, RequestJob, RequestResultEvent>;
 	Logger logger;
 	QThread *owner = QThread::currentThread();
 	PyObject *runtime = nullptr;
@@ -215,6 +219,67 @@ bool Host::start(const QString &directory) {
 					_private->queue.pop_front();
 				}
 				const auto gil = PyGILState_Ensure();
+				if (auto request = std::get_if<Private::RequestJob>(&job)) {
+					auto filtered = std::optional<RequestEvent>(request->event);
+					{
+						const auto offline = PythonObject(request->event.offline
+							? PyBool_FromLong(*request->event.offline) : Py_NewRef(Py_None));
+						const auto name = request->event.name.toUtf8();
+						const auto result = offline
+							? PythonObject(PyObject_CallMethod(_private->manager,
+								"dispatch_request", "sKO", name.constData(),
+								static_cast<unsigned long long>(request->event.accountId), offline.get()))
+							: PythonObject();
+						if (result && result.get() == Py_None) {
+							filtered.reset();
+						} else if (result && PyTuple_Check(result.get())
+							&& PyTuple_Size(result.get()) == 1) {
+							const auto value = PyTuple_GetItem(result.get(), 0);
+							if (request->event.offline && PyBool_Check(value)) {
+								filtered->offline = (value == Py_True);
+							} else if (request->event.offline || value != Py_None) {
+								PyErr_SetString(PyExc_TypeError, "Invalid request DTO result");
+							}
+						} else if (result) {
+							PyErr_SetString(PyExc_TypeError, "Invalid request dispatcher result");
+						}
+						if (PyErr_Occurred()) {
+							filtered = request->event;
+							_private->logger(u"Plugin Host: request dispatch failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					QMetaObject::invokeMethod(_private->delivery.get(),
+						[done = std::move(request->done), filtered = std::move(filtered)] {
+							done(filtered);
+						}, Qt::QueuedConnection);
+					continue;
+				}
+				if (auto response = std::get_if<RequestResultEvent>(&job)) {
+					{
+						const auto value = PythonObject(response->value
+							? PyBool_FromLong(*response->value) : Py_NewRef(Py_None));
+						const auto code = PythonObject(response->errorCode
+							? PyLong_FromLong(*response->errorCode) : Py_NewRef(Py_None));
+						const auto encoded = response->errorText.toUtf8();
+						const auto text = PythonObject(PyUnicode_DecodeUTF8(
+							encoded.constData(), encoded.size(), "strict"));
+						const auto name = response->name.toUtf8();
+						const auto result = (value && code && text)
+							? PythonObject(PyObject_CallMethod(_private->manager,
+								"dispatch_response", "sKOOO", name.constData(),
+								static_cast<unsigned long long>(response->accountId),
+								value.get(), code.get(), text.get()))
+							: PythonObject();
+						if (!result) {
+							_private->logger(u"Plugin Host: response dispatch failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					continue;
+				}
 				if (auto request = std::get_if<Private::SendRequest>(&job)) {
 					auto filtered = std::optional<QString>(request->text);
 					{
@@ -392,6 +457,43 @@ bool Host::filterOutgoing(quint64 accountId, QString text, SendCallback done) {
 void FilterOutgoing(quint64 accountId, QString text, SendCallback done) {
 	if (!ActiveHost || !ActiveHost->filterOutgoing(accountId, text, done)) {
 		done(text);
+	}
+}
+
+bool Host::filterRequest(RequestEvent event, RequestCallback done) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || !_private->loaded || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(Private::RequestJob{ std::move(event), std::move(done) });
+	_private->ready.notify_one();
+	return true;
+}
+
+bool Host::post(RequestResultEvent event) {
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting || _private->queue.size() >= 4096) {
+		return false;
+	}
+	_private->queue.push_back(std::move(event));
+	_private->ready.notify_one();
+	return true;
+}
+
+bool RequestHooksEnabled() {
+	return ActiveHost != nullptr;
+}
+
+void FilterRequest(RequestEvent event, RequestCallback done) {
+	if (!ActiveHost || !ActiveHost->filterRequest(event, done)) {
+		done(event);
+	}
+}
+
+void Publish(RequestResultEvent event) {
+	if (ActiveHost && !ActiveHost->post(std::move(event))) {
+		qWarning("Plugin Host: event queue full; response dropped");
 	}
 }
 

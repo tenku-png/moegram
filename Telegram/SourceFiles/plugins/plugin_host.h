@@ -48,6 +48,25 @@ void Publish(UpdateEvent event);
 using SendCallback = std::function<void(std::optional<QString>)>;
 void FilterOutgoing(quint64 accountId, QString text, SendCallback done);
 
+struct RequestEvent {
+	QString name;
+	quint64 accountId = 0;
+	std::optional<bool> offline;
+};
+
+struct RequestResultEvent {
+	QString name;
+	quint64 accountId = 0;
+	std::optional<bool> value;
+	std::optional<int> errorCode;
+	QString errorText;
+};
+
+using RequestCallback = std::function<void(std::optional<RequestEvent>)>;
+void FilterRequest(RequestEvent event, RequestCallback done);
+void Publish(RequestResultEvent event);
+[[nodiscard]] bool RequestHooksEnabled();
+
 class Host final {
 public:
 	using Logger = std::function<void(const QString &)>;
@@ -65,6 +84,8 @@ public:
 	[[nodiscard]] int loadedCount() const;
 	[[nodiscard]] bool filterOutgoing(
 		quint64 accountId, QString text, SendCallback done);
+	[[nodiscard]] bool filterRequest(RequestEvent event, RequestCallback done);
+	[[nodiscard]] bool post(RequestResultEvent event);
 
 private:
 	struct Private;

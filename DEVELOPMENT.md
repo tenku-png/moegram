@@ -159,7 +159,7 @@ out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -quit
 
 PoC проверен на Arch Linux: Debug-сборка с Qt 6.11.2 и CPython 3.14.7, smoke-тест embedded host, реальные запуски клиента через Wayland и Qt offscreen. В обоих режимах проверены load/unload `hello_world`, намеренный `RuntimeError` в его копии, загрузка следующего плагина после ошибки и завершение через `-quit` с кодом `0`.
 
-## Минимальный Event API (SDK 0.3.0, API 1)
+## Минимальный Event API (SDK 0.4.0, API 1)
 
 `from base_plugin import BasePlugin, Message, SDK_VERSION, API_VERSION`. Metadata `__moegram_api_version__ = "1"` фиксирует major-контракт MoeGram; если поле отсутствует, используется API 1. Другая версия отклоняется через AST до исполнения файла. `SDK_VERSION` описывает версию desktop SDK, `API_VERSION` — совместимость DTO/callback. Несовместимые изменения требуют нового major API. Это отдельная нумерация: она не означает поддержку Android SDK ExteraGram 1.4.x; его `__sdk_version__` не является проверкой совместимости MoeGram.
 
@@ -187,7 +187,7 @@ C++ `Publish` вызывается на потоке приложения и о�
 
 ### Сопоставление с ExteraGram
 
-SDK 0.3.0 добавляет совместимую сигнатуру `on_update_hook`, регистрацию `add_hook` / `remove_hook` и `HookResult` для read-only наблюдения. Один canonical immutable Update используется hook и существующими специализированными callback. Полный список совместимости 1:1, MoeGram extensions, ограничения, smoke-тесты и статус реальной integration-проверки: [EVENT_API_COMPATIBILITY.md](docs/EVENT_API_COMPATIBILITY.md).
+SDK 0.3.0 добавляет совместимую сигнатуру `on_update_hook`, регистрацию `add_hook` / `remove_hook` и `HookResult` для read-only наблюдения. Один canonical immutable Update используется hook и существующими специализированными callback. Сигнатуры, MoeGram extensions, ограничения и smoke-команды: [EVENT_API_COMPATIBILITY.md](docs/EVENT_API_COMPATIBILITY.md).
 
 ### Smoke-тесты событий
 
@@ -201,11 +201,11 @@ out/arch-debug/Telegram/SourceFiles/plugins/moegram_plugin_smoke
 
 Event smoke подаёт синтетические DTO через настоящий C++ embedded Host: отдельно create/edit/delete, unknown delete, Unicode/NUL, сохранение snapshot, immutability, major version validation до исполнения, deterministic callback order, продолжение после RuntimeError/SystemExit/KeyboardInterrupt, работа Qt timer во время callback, очистка pending событий и запрет post после unload. Эти проверки не требуют аккаунта и не отправляют Telegram сообщения; реальную доставку сетевых updates нужно дополнительно проверять на авторизованном тестовом аккаунте.
 
-Проверено на Arch Linux: полный incremental Debug target `Telegram`, lifecycle smoke, Event smoke с настоящим `event_logger.py` (включая лимит очереди; 10 повторов прошли), запуск нового клиента через Qt offscreen и штатный `-quit` с exit code 0 в обычном сценарии и после ошибки lifecycle другого плагина. Сетевая доставка реальных create/edit/delete на авторизованном аккаунте не проверялась.
+Проверено на Arch Linux: полный incremental Debug target `Telegram`, lifecycle smoke, Event smoke с настоящим `event_logger.py` (включая лимит очереди; 10 повторов прошли), запуск нового клиента через Qt offscreen и штатный `-quit` с exit code 0 в обычном сценарии и после ошибки lifecycle другого плагина. Подробные локальные integration-отчёты хранятся в игнорируемом `.dev-notes/`.
 
 ## Совместимость hello_command: текстовый send hook
 
-Опубликованный исходник ExteraGram загружается без редактирования; список исходных несовместимостей и границы adapters: [HELLO_COMMAND_COMPATIBILITY.md](docs/HELLO_COMMAND_COMPATIBILITY.md).
+Опубликованный исходник ExteraGram использует следующий ограниченный контракт adapters.
 
 `BasePlugin.add_on_send_message_hook(priority=0)` регистрирует `on_send_message_hook(account, params)`. Перед обычной текстовой отправкой ApiWrap передаёт detached params.message на существующий Python worker; Qt loop продолжает работу. DEFAULT сохраняет текст, MODIFY применяет новый, MODIFY_FINAL завершает chain, CANCEL отменяет отправку. Exceptions отдельного hook не мешают следующим. При изменении текста прежние entities/preview очищаются. Поля SendMessageParams кроме message пока не моделируются. Из plugins нельзя самостоятельно инициировать Telegram send/request.
 
@@ -218,7 +218,11 @@ out/arch-debug/Telegram/SourceFiles/plugins/moegram_send_smoke \
   "$PWD/Telegram/SourceFiles/plugins/tests/fixtures/exteragram_hello_command/hello_command.py"
 ```
 
-Smoke не отправляет Telegram сообщения. Реальная `.hello Alice` → `Hello, Alice!` требует отдельной проверки на авторизованном клиенте; её статус фиксируется в compatibility report.
+Smoke не отправляет Telegram сообщения. Подробные локальные integration-отчёты хранятся только в игнорируемом `.dev-notes/`.
+
+## Request hooks (SDK 0.4.0, API 1)
+
+Поддержаны pre-request CANCEL для typing и MODIFY offline для updateStatus; post-request callbacks получают read-only Bool/RPC error DTOs. `ui.settings.Switch` — data descriptor без UI. Сигнатуры, порядок, unload, границы subset и команды тестов: [REQUEST_HOOKS.md](docs/REQUEST_HOOKS.md).
 
 
 ## Структура AyuGram и Telegram Desktop

@@ -16,6 +16,18 @@ target_link_libraries(moegram_plugins PRIVATE Python3::Python desktop-app::lib_b
 
 option(MOEGRAM_PLUGIN_TESTS "Build the embedded plugin host smoke test" OFF)
 if (MOEGRAM_PLUGIN_TESTS)
+    add_executable(moegram_request_smoke
+        tests/request_smoke.cpp
+        telegram_request_adapter.cpp
+        ../mtproto/details/mtproto_serialized_request.cpp
+        ../mtproto/mtproto_response.cpp
+        $<FILTER:$<TARGET_OBJECTS:td_scheme>,EXCLUDE,scheme-dump_to_text>)
+    init_target(moegram_request_smoke)
+    target_precompile_headers(moegram_request_smoke PRIVATE <scheme.h>)
+    target_include_directories(moegram_request_smoke PRIVATE
+        $<TARGET_PROPERTY:td_scheme,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_link_libraries(moegram_request_smoke PRIVATE
+        moegram::plugins desktop-app::lib_tl Qt::Core)
     add_executable(moegram_send_smoke tests/send_smoke.cpp)
     init_target(moegram_send_smoke)
     target_link_libraries(moegram_send_smoke PRIVATE moegram::plugins Qt::Core)

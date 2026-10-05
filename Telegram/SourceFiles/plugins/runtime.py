@@ -16,7 +16,7 @@ class _LogHandler(logging.Handler):
         _write_log(self.format(record))
 
 
-SDK_VERSION = "0.3.0"
+SDK_VERSION = "0.4.0"
 API_VERSION = 1
 
 
@@ -35,6 +35,13 @@ class Input:
 
 
 @dataclass
+class Switch:
+    key: str
+    text: str
+    default: bool
+
+
+@dataclass
 class Text:
     text: str
     subtext: str | None = None
@@ -47,6 +54,7 @@ _settings_module = types.ModuleType("ui.settings")
 _settings_module.Header = Header
 _settings_module.Input = Input
 _settings_module.Text = Text
+_settings_module.Switch = Switch
 _ui_module.settings = _settings_module
 sys.modules["ui"] = _ui_module
 sys.modules["ui.settings"] = _settings_module
@@ -55,6 +63,27 @@ sys.modules["ui.settings"] = _settings_module
 @dataclass
 class SendParams:
     message: str
+
+
+@dataclass(slots=True)
+class TL_messages_setTyping:
+    pass
+
+
+@dataclass(slots=True)
+class TL_account_updateStatus:
+    offline: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BoolResponse:
+    value: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RpcError:
+    code: int
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +235,12 @@ class BasePlugin:
 
     def remove_hook(self, name: str):
         self._update_hooks.pop(name, None)
+
+    def pre_request_hook(self, request_name: str, account: int, request) -> HookResult:
+        return HookResult()
+
+    def post_request_hook(self, request_name: str, account: int, response, error) -> HookResult:
+        return HookResult()
 
     def on_update_hook(self, update_name: str, account: int, update: Update) -> HookResult:
         return HookResult()
@@ -397,6 +432,62 @@ class PluginHost:
                 _report_failure(f"on_send_message_hook failed: {plugin_id}")
         return message
 
+    def _matching_hooks(self, name):
+        hooks = []
+        for order, (plugin_id, _, instance) in enumerate(self._loaded):
+            priorities = [priority for pattern, (substring, priority)
+                          in instance._update_hooks.items()
+                          if (pattern in name if substring else pattern == name)]
+            if priorities:
+                hooks.append((-max(priorities), order, plugin_id, instance))
+        return sorted(hooks, key=lambda hook: hook[:2])
+
+    def dispatch_request(self, name, account, offline):
+        if name not in ("TL_messages_setTyping", "TL_account_updateStatus"):
+            raise ValueError("Unsupported request DTO")
+        for _, _, plugin_id, instance in self._matching_hooks(name):
+            request = (TL_account_updateStatus(offline)
+                       if name == "TL_account_updateStatus" else TL_messages_setTyping())
+            try:
+                result = instance.pre_request_hook(name, account, request)
+                if result is None:
+                    continue
+                if not isinstance(result, HookResult):
+                    raise TypeError("pre_request_hook must return HookResult or None")
+                if result.strategy == HookStrategy.CANCEL:
+                    return None
+                if result.strategy == HookStrategy.DEFAULT:
+                    continue
+                if result.strategy not in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
+                    raise ValueError("Unsupported request strategy")
+                candidate = result.request if result.request is not None else request
+                if type(candidate) is not type(request):
+                    raise TypeError("Request DTO type must remain unchanged")
+                if isinstance(candidate, TL_account_updateStatus):
+                    if type(candidate.offline) is not bool:
+                        raise TypeError("Request offline must remain a bool")
+                    offline = candidate.offline
+                if result.strategy == HookStrategy.MODIFY_FINAL:
+                    break
+            except BaseException:
+                _report_failure(f"pre_request_hook failed: {plugin_id}")
+        return (offline,)
+
+    def dispatch_response(self, name, account, value, error_code, error_text):
+        response = BoolResponse(value) if value is not None else None
+        error = RpcError(error_code, error_text) if error_code is not None else None
+        for _, _, plugin_id, instance in self._matching_hooks(name):
+            try:
+                result = instance.post_request_hook(name, account, response, error)
+                if result is not None:
+                    if not isinstance(result, HookResult):
+                        raise TypeError("post_request_hook must return HookResult or None")
+                    if result.strategy is not HookStrategy.DEFAULT:
+                        _write_log(f"Plugin Host: {plugin_id}: {result.strategy.name} "
+                                   "is unsupported for read-only response notifications")
+            except BaseException:
+                _report_failure(f"post_request_hook failed: {plugin_id}")
+
     def dispatch_update(self, name, payloads, pts=None, pts_count=None, native=False):
         if not payloads:
             return
@@ -448,15 +539,7 @@ class PluginHost:
         self._sequence += 1
         update = Update(name, snapshots[0].account_id, snapshots, self._sequence,
                         pts, pts_count, "telegram" if native else "model")
-        hooks = []
-        for order, (plugin_id, _, instance) in enumerate(self._loaded):
-            priorities = [
-                priority for pattern, (substring, priority) in instance._update_hooks.items()
-                if (pattern in name if substring else pattern == name)
-            ]
-            if priorities:
-                hooks.append((-max(priorities), order, plugin_id, instance))
-        for _, _, plugin_id, instance in sorted(hooks, key=lambda hook: hook[:2]):
+        for _, _, plugin_id, instance in self._matching_hooks(name):
             try:
                 result = instance.on_update_hook(name, update.account_id, update)
                 if result is not None:

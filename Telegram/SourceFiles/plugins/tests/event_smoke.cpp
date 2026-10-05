@@ -54,7 +54,7 @@ __name__ = 'Healthy'
 __moegram_api_version__ = '1'
 class Plugin(BasePlugin):
     def on_message(self, message):
-        assert API_VERSION == 1 and SDK_VERSION == '0.3.0'
+        assert API_VERSION == 1 and SDK_VERSION == '0.4.0'
         assert message.account_id == 123 and message.chat_id == -1000000000456
         assert message.sender_id == 789 and message.outgoing is False
         assert message.id == message.getId() == 42

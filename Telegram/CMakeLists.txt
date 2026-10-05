@@ -32,6 +32,8 @@ add_subdirectory(SourceFiles/plugins)
 target_sources(Telegram PRIVATE
     ${src_loc}/plugins/telegram_event_adapter.cpp
     ${src_loc}/plugins/telegram_event_adapter.h
+    ${src_loc}/plugins/telegram_request_adapter.cpp
+    ${src_loc}/plugins/telegram_request_adapter.h
 )
 
 include(cmake/telegram_options.cmake)
