@@ -4,8 +4,49 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace MoeGram::Plugins {
+
+enum class EventKind { Message, Edit, Delete };
+
+struct MessageEvent {
+	EventKind kind = EventKind::Message;
+	quint64 accountId = 0;
+	qint64 messageId = 0;
+	std::optional<qint64> chatId;
+	std::optional<qint64> senderId;
+	std::optional<QString> text;
+	std::optional<bool> outgoing;
+};
+
+struct UpdateEvent {
+	QString name;
+	quint64 accountId = 0;
+	std::vector<MessageEvent> messages;
+	std::optional<int> pts;
+	std::optional<int> ptsCount;
+	bool native = false;
+};
+
+class NativeEventScope final {
+public:
+	explicit NativeEventScope(bool active);
+	~NativeEventScope();
+	NativeEventScope(const NativeEventScope &) = delete;
+	NativeEventScope &operator=(const NativeEventScope &) = delete;
+
+private:
+	bool _active;
+
+};
+
+void Publish(MessageEvent event);
+void Publish(UpdateEvent event);
+[[nodiscard]] bool ModelEventsEnabled();
+using SendCallback = std::function<void(std::optional<QString>)>;
+void FilterOutgoing(quint64 accountId, QString text, SendCallback done);
 
 class Host final {
 public:
@@ -19,7 +60,11 @@ public:
 
 	[[nodiscard]] bool start(const QString &directory);
 	void stop();
+	[[nodiscard]] bool post(MessageEvent event);
+	[[nodiscard]] bool post(UpdateEvent event);
 	[[nodiscard]] int loadedCount() const;
+	[[nodiscard]] bool filterOutgoing(
+		quint64 accountId, QString text, SendCallback done);
 
 private:
 	struct Private;
