@@ -751,13 +751,13 @@ void start() {
 		qputenv("XDG_ACTIVATION_TOKEN", qgetenv("DESKTOP_STARTUP_ID"));
 	}
 
-	qputenv("PULSE_PROP_application.name", AppName.utf8());
+	qputenv("PULSE_PROP_application.name", AppDisplayName.utf8());
 	qputenv(
 		"PULSE_PROP_application.icon_name",
 		ApplicationIconName().toUtf8());
 
 	GLib::set_prgname(cExeName().toStdString());
-	GLib::set_application_name(AppName.data());
+	GLib::set_application_name(AppDisplayName.data());
 
 	Webview::WebKitGTK::SetSocketPath(u"%1/%2-%3-webview-{}"_q.arg(
 		QDir::tempPath(),

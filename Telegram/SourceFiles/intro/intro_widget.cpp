@@ -179,7 +179,7 @@ Widget::Widget(
 		}, lifetime());
 	}
 
-	_footer->setText(QString("AyuGram Desktop v%1").arg(currentVersionText()));
+	_footer->setText(u"MoeGram Desktop v%1"_q.arg(currentVersionText()));
 }
 
 rpl::producer<> Widget::showSettingsRequested() const {

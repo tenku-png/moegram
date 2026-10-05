@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=AyuGram Desktop
-Comment=Desktop version of AyuGram - ToS breaking Telegram client
+Name=MoeGram Desktop
+Comment=MoeGram — based on AyuGram Desktop and Telegram Desktop
 TryExec=AyuGram
 Exec=env DESKTOPINTEGRATION=1 AyuGram -- %U
 Icon=com.ayugram.desktop
@@ -18,5 +18,5 @@ X-GNOME-SingleWindow=true
 
 [Desktop Action quit]
 Exec=AyuGram -quit
-Name=Quit AyuGram
+Name=Quit MoeGram
 Icon=application-exit

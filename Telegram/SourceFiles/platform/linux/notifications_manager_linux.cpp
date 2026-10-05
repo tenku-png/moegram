@@ -816,7 +816,7 @@ void Manager::Private::showNotification(
 
 				xdg_notifications_notifications_call_notify(
 					_interface.gobj_(),
-					AppName.data(),
+					AppDisplayName.data(),
 					0,
 					(!hasImage
 						? ApplicationIconName().toStdString()

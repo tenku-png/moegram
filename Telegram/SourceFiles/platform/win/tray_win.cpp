@@ -191,7 +191,7 @@ void Tray::createIcon() {
 		}
 		_icon->init();
 		updateIcon();
-		_icon->updateToolTip(AppName.utf16());
+		_icon->updateToolTip(AppDisplayName.utf16());
 
 		using Reason = QPlatformSystemTrayIcon::ActivationReason;
 		base::qt_signal_producer(
@@ -292,7 +292,7 @@ void Tray::addAction(rpl::producer<QString> text, Fn<void()> &&callback) {
 void Tray::showTrayMessage() const {
 	if (!cSeenTrayTooltip() && _icon) {
 		_icon->showMessage(
-			AppName.utf16(),
+			AppDisplayName.utf16(),
 			tr::lng_tray_icon_text(tr::now),
 			QIcon(),
 			QPlatformSystemTrayIcon::Information,

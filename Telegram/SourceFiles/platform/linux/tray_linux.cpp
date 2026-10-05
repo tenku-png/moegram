@@ -292,7 +292,7 @@ void Tray::createIcon() {
 
 		_icon = base::make_unique_q<QSystemTrayIcon>(nullptr);
 		_icon->setIcon(_iconGraphic->trayIcon());
-		_icon->setToolTip(AppName.utf16());
+		_icon->setToolTip(AppDisplayName.utf16());
 
 		using Reason = QSystemTrayIcon::ActivationReason;
 		base::qt_signal_producer(
