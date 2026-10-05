@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace MoeGram::Plugins {
@@ -25,6 +26,31 @@ struct MessageMenuItem {
 	QString id;
 	QString text;
 	int priority = 0;
+};
+
+enum class SettingKind { Header, Switch, Input, Text, Divider, Error };
+
+struct SettingItem {
+	SettingKind kind = SettingKind::Text;
+	QString key;
+	QString text;
+	QString subtext;
+	QString value;
+	bool checked = false;
+};
+
+struct PluginSettings {
+	QString id;
+	QString name;
+	std::vector<SettingItem> items;
+};
+
+struct PluginInfo {
+	QString id;
+	QString name;
+	QString version;
+	QString error;
+	bool enabled = false;
 };
 
 struct UpdateEvent {
@@ -77,6 +103,13 @@ class Host final {
 public:
 	using Logger = std::function<void(const QString &)>;
 	using ToastCallback = std::function<void(const QString &)>;
+	using SettingsCallback = std::function<void(std::vector<PluginSettings>)>;
+	using PluginsCallback = std::function<void(std::vector<PluginInfo>)>;
+	using SettingValue = std::variant<QString, bool>;
+	using SettingCallback = std::function<void(bool)>;
+	using PluginEnabledCallback = std::function<void(
+		bool,
+		std::vector<PluginInfo>)>;
 
 	explicit Host(Logger logger, ToastCallback toast = nullptr);
 	~Host();
@@ -97,6 +130,17 @@ public:
 	[[nodiscard]] bool invokeMessageMenuItem(
 		QString id,
 		MessageEvent message);
+	[[nodiscard]] bool requestSettings(SettingsCallback done);
+	[[nodiscard]] bool requestPlugins(PluginsCallback done);
+	[[nodiscard]] bool setPluginEnabled(
+		QString pluginId,
+		bool enabled,
+		PluginEnabledCallback done = nullptr);
+	[[nodiscard]] bool updateSetting(
+		QString pluginId,
+		QString key,
+		SettingValue value,
+		SettingCallback done = nullptr);
 
 private:
 	struct Private;
@@ -106,5 +150,16 @@ private:
 
 [[nodiscard]] std::vector<MessageMenuItem> MessageMenuItems();
 [[nodiscard]] bool InvokeMessageMenuItem(QString id, MessageEvent message);
+[[nodiscard]] bool RequestPluginSettings(Host::SettingsCallback done);
+[[nodiscard]] bool RequestPlugins(Host::PluginsCallback done);
+[[nodiscard]] bool SetPluginEnabled(
+	QString pluginId,
+	bool enabled,
+	Host::PluginEnabledCallback done = nullptr);
+[[nodiscard]] bool UpdatePluginSetting(
+	QString pluginId,
+	QString key,
+	Host::SettingValue value,
+	Host::SettingCallback done = nullptr);
 
 }

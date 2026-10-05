@@ -1,6 +1,7 @@
 import ast
 import logging
 import json
+import os
 from dataclasses import dataclass
 from collections import deque
 from enum import Enum
@@ -16,7 +17,7 @@ class _LogHandler(logging.Handler):
         _write_log(self.format(record))
 
 
-SDK_VERSION = "0.5.0"
+SDK_VERSION = "0.6.0"
 API_VERSION = 1
 
 
@@ -26,12 +27,20 @@ class Header:
 
 
 @dataclass
+class Divider:
+    text: str | None = None
+
+
+@dataclass
 class Input:
     key: str
     text: str
     default: str = ""
     subtext: str | None = None
     icon: str | None = None
+    on_change: object = None
+    on_long_click: object = None
+    link_alias: str | None = None
 
 
 @dataclass
@@ -39,6 +48,11 @@ class Switch:
     key: str
     text: str
     default: bool
+    subtext: str | None = None
+    icon: str | None = None
+    on_change: object = None
+    on_long_click: object = None
+    link_alias: str | None = None
 
 
 @dataclass
@@ -46,12 +60,18 @@ class Text:
     text: str
     subtext: str | None = None
     icon: str | None = None
+    accent: bool = False
+    red: bool = False
+    on_click: object = None
+    on_long_click: object = None
+    link_alias: str | None = None
 
 
 _ui_module = types.ModuleType("ui")
 _ui_module.__path__ = []
 _settings_module = types.ModuleType("ui.settings")
 _settings_module.Header = Header
+_settings_module.Divider = Divider
 _settings_module.Input = Input
 _settings_module.Text = Text
 _settings_module.Switch = Switch
@@ -233,6 +253,10 @@ class BasePlugin:
         self._send_priority = None
         self._menu_items = []
         self._settings = {}
+        self._settings_path = None
+        self._setting_callbacks = {}
+        self._setting_types = {}
+        self._settings_reload_requested = False
         self.logger = logging.getLogger("plugin.unbound")
 
     def log(self, message):
@@ -244,6 +268,9 @@ class BasePlugin:
     def on_plugin_unload(self):
         pass
 
+    def create_settings(self):
+        return []
+
     def add_on_send_message_hook(self, priority: int = 0):
         if not isinstance(priority, int):
             raise TypeError("Send hook priority must be an integer")
@@ -254,6 +281,25 @@ class BasePlugin:
 
     def get_setting(self, key: str, default=None):
         return self._settings.get(key, default)
+
+    def set_setting(self, key: str, value, reload_settings: bool = False):
+        if not isinstance(key, str) or not key:
+            raise ValueError("Setting key must be a nonempty string")
+        if type(reload_settings) is not bool:
+            raise TypeError("reload_settings must be a bool")
+        settings = dict(self._settings)
+        settings[key] = value
+        encoded = json.dumps(settings, ensure_ascii=False, allow_nan=False)
+        path = self._settings_path
+        if path is None:
+            raise RuntimeError("Plugin settings storage is unavailable")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(encoded, encoding="utf-8")
+        os.replace(temporary, path)
+        self._settings = settings
+        self._settings_reload_requested |= reload_settings
+        return reload_settings
 
     def add_hook(self, name: str, match_substring: bool = False, priority: int = 0):
         if not isinstance(name, str) or not name:
@@ -370,6 +416,9 @@ class PluginHost:
     def __init__(self):
         self._loaded = []
         self._ids = set()
+        self._plugins = {}
+        self._enabled_path = None
+        self._enabled_state = {}
         self._sequence = 0
         self._seen = set()
         self._recent = deque()
@@ -379,12 +428,111 @@ class PluginHost:
         self._deleted_recent = deque()
 
     def load(self, directory):
+        self._loaded.clear()
+        self._ids.clear()
+        self._plugins.clear()
+        self._enabled_path = Path(directory).parent / "plugin-settings" / ".enabled.json"
+        enabled = self._read_enabled_state()
+        self._enabled_state = dict(enabled)
         for path in sorted(Path(directory).glob("*.py")):
             if path.is_symlink() or not path.is_file() or path.name.startswith("_"):
                 continue
-            self._load_one(path)
+            try:
+                metadata = _metadata(ast.parse(path.read_bytes(), filename=str(path)))
+                plugin_id = metadata["__id__"]
+                if plugin_id in self._plugins:
+                    raise ValueError(f"Duplicate plugin id: {plugin_id}")
+                entry = {
+                    "path": path,
+                    "name": metadata["__name__"],
+                    "version": metadata["__version__"],
+                    "error": "",
+                }
+                self._plugins[plugin_id] = entry
+                if enabled.get(plugin_id, True) and not self._load_one(path):
+                    entry["error"] = "Plugin failed to load; see log"
+            except BaseException:
+                _report_failure(f"discovery failed: {path.name}")
         _write_log(f"Plugin Host: loaded {len(self._loaded)} plugin(s)")
         return len(self._loaded)
+
+    def _read_enabled_state(self):
+        path = self._enabled_path
+        if path is None or not path.is_file():
+            return {}
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or any(
+                    not isinstance(key, str) or type(value) is not bool
+                    for key, value in state.items()):
+                raise ValueError("Plugin enabled state must be a boolean object")
+            return state
+        except BaseException:
+            _report_failure("plugin enabled state load failed")
+            return {}
+
+    def _write_enabled_state(self, plugin_id, enabled):
+        path = self._enabled_path
+        if path is None:
+            return False
+        state = dict(self._enabled_state)
+        state[plugin_id] = enabled
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps(state, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8")
+            os.replace(temporary, path)
+            self._enabled_state = state
+            return True
+        except BaseException:
+            _report_failure(f"plugin enabled state save failed: {plugin_id}")
+            return False
+
+    def plugins_snapshot(self):
+        return [
+            (plugin_id, entry["name"], entry["version"],
+             plugin_id in self._ids, entry["error"])
+            for plugin_id, entry in self._plugins.items()
+        ]
+
+    def set_plugin_enabled(self, plugin_id, enabled):
+        if type(enabled) is not bool:
+            raise TypeError("Plugin enabled state must be a bool")
+        entry = self._plugins.get(plugin_id)
+        if entry is None:
+            return False
+        loaded = plugin_id in self._ids
+        if loaded == enabled:
+            return True
+        if not self._write_enabled_state(plugin_id, enabled):
+            return False
+        if enabled:
+            if not self._load_one(entry["path"]):
+                entry["error"] = "Plugin failed to load; see log"
+                self._write_enabled_state(plugin_id, False)
+                return False
+            entry["error"] = ""
+        else:
+            self._unload_plugin(plugin_id)
+        return True
+
+    def _unload_plugin(self, plugin_id):
+        for index, (current_id, module_name, instance) in enumerate(self._loaded):
+            if current_id != plugin_id:
+                continue
+            self._loaded.pop(index)
+            instance._update_hooks.clear()
+            instance._send_priority = None
+            instance._menu_items.clear()
+            instance._setting_callbacks.clear()
+            instance._setting_types.clear()
+            self._unload_one(instance, module_name)
+            self._ids.discard(plugin_id)
+            _write_log(f"Plugin Host: unloaded {plugin_id}")
+            return True
+        return False
 
     def _load_one(self, path):
         module_name = None
@@ -432,12 +580,19 @@ class PluginHost:
             instance._send_priority = None
             instance._menu_items = []
             instance._settings = {}
+            instance._setting_callbacks = {}
+            instance._setting_types = {}
             settings_path = path.parent.parent / "plugin-settings" / f"{plugin_id}.json"
+            instance._settings_path = settings_path
+            instance._settings_reload_requested = False
             if settings_path.is_file():
-                settings = json.loads(settings_path.read_text(encoding="utf-8"))
-                if not isinstance(settings, dict):
-                    raise ValueError("Plugin settings must be a JSON object")
-                instance._settings = settings
+                try:
+                    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                    if not isinstance(settings, dict):
+                        raise ValueError("Plugin settings must be a JSON object")
+                    instance._settings = settings
+                except BaseException:
+                    _report_failure(f"settings load failed: {plugin_id}")
             instance.logger = logging.getLogger(f"plugin.{plugin_id}")
             load_started = True
             instance.on_plugin_load()
@@ -447,12 +602,14 @@ class PluginHost:
                 f"Plugin Host: loaded {plugin_id} "
                 f"({instance.name}, {instance.version})"
             )
+            return True
         except BaseException:
             _report_failure(f"load failed: {path.name}")
             if load_started:
                 self._unload_one(instance, module_name)
             elif module_name is not None:
                 sys.modules.pop(module_name, None)
+            return False
 
     def _unload_one(self, instance, module_name):
         try:
@@ -633,6 +790,120 @@ class PluginHost:
         return [(item_id, text, priority)
                 for item_id, text, priority, _, _ in items]
 
+    @staticmethod
+    def _setting_text(value, field, optional=False):
+        if optional and value is None:
+            return ""
+        if not isinstance(value, str):
+            raise TypeError(f"{field} must be a string")
+        value.encode("utf-8")
+        return value
+
+    def settings_snapshot(self):
+        pages = []
+        for plugin_id, _, instance in self._loaded:
+            rows = []
+            instance._setting_callbacks = {}
+            instance._setting_types = {}
+            try:
+                descriptors = instance.create_settings()
+                if not isinstance(descriptors, (list, tuple)):
+                    raise TypeError("create_settings() must return a list")
+                seen_keys = set()
+                for descriptor in descriptors:
+                    try:
+                        if isinstance(descriptor, Header):
+                            rows.append(("header", "", self._setting_text(
+                                descriptor.text, "Header.text"), "", "", False))
+                        elif isinstance(descriptor, Divider):
+                            rows.append(("divider", "", self._setting_text(
+                                descriptor.text, "Divider.text", optional=True),
+                                "", "", False))
+                        elif isinstance(descriptor, Text):
+                            if descriptor.on_click is not None or descriptor.on_long_click is not None:
+                                _write_log(
+                                    f"Plugin Host: {plugin_id}: Text callbacks are unsupported; ignored")
+                            rows.append(("text", "", self._setting_text(
+                                descriptor.text, "Text.text"), self._setting_text(
+                                descriptor.subtext, "Text.subtext", optional=True),
+                                "", False))
+                        elif isinstance(descriptor, (Input, Switch)):
+                            kind = "input" if isinstance(descriptor, Input) else "switch"
+                            key = self._setting_text(descriptor.key, f"{kind}.key")
+                            if not key:
+                                raise ValueError(f"{kind}.key must not be empty")
+                            if key in seen_keys:
+                                raise ValueError(f"Duplicate setting key: {key}")
+                            seen_keys.add(key)
+                            title = self._setting_text(descriptor.text, f"{kind}.text")
+                            subtext = self._setting_text(
+                                descriptor.subtext, f"{kind}.subtext", optional=True)
+                            default = descriptor.default
+                            expected = str if kind == "input" else bool
+                            if kind == "input":
+                                if default is not None and not isinstance(default, str):
+                                    raise TypeError("Input.default must be a string or None")
+                                default = default or ""
+                            elif type(default) is not bool:
+                                raise TypeError("Switch.default must be a bool")
+                            callback = descriptor.on_change
+                            if callback is not None and not callable(callback):
+                                _write_log(
+                                    f"Plugin Host: {plugin_id}: {kind}.on_change is not callable; ignored")
+                                callback = None
+                            if descriptor.on_long_click is not None:
+                                _write_log(
+                                    f"Plugin Host: {plugin_id}: {kind}.on_long_click is unsupported; ignored")
+                            value = instance.get_setting(key, default)
+                            if (kind == "input" and not isinstance(value, str)) or (
+                                    kind == "switch" and type(value) is not bool):
+                                _write_log(
+                                    f"Plugin Host: {plugin_id}: invalid saved value for {key}; using default")
+                                value = default
+                            instance._setting_types[key] = expected
+                            if callback is not None:
+                                instance._setting_callbacks[key] = callback
+                            rows.append((kind, key, title, subtext,
+                                         value if kind == "input" else "",
+                                         value if kind == "switch" else False))
+                        else:
+                            _write_log(
+                                f"Plugin Host: {plugin_id}: unsupported settings item "
+                                f"{type(descriptor).__name__}; ignored")
+                    except BaseException:
+                        _report_failure(f"invalid settings item: {plugin_id}")
+                        rows.append(("error", "", "Invalid plugin setting; see log", "", "", False))
+            except BaseException:
+                _report_failure(f"create_settings failed: {plugin_id}")
+                rows = [("error", "", "Settings unavailable; see log", "", "", False)]
+            pages.append((plugin_id, instance.name, rows))
+        return pages
+
+    def update_setting(self, plugin_id, key, value):
+        for current_id, _, instance in self._loaded:
+            if current_id != plugin_id:
+                continue
+            expected = instance._setting_types.get(key)
+            if expected is None or type(value) is not expected:
+                _write_log(f"Plugin Host: {plugin_id}: rejected invalid setting update for {key}")
+                return False
+            try:
+                instance._settings_reload_requested = False
+                instance.set_setting(key, value)
+                callback = instance._setting_callbacks.get(key)
+                if callback is not None:
+                    try:
+                        callback(value)
+                    except BaseException:
+                        _report_failure(f"settings callback failed: {plugin_id}:{key}")
+                reload_settings = instance._settings_reload_requested
+                instance._settings_reload_requested = False
+                return reload_settings
+            except BaseException:
+                _report_failure(f"settings save failed: {plugin_id}:{key}")
+                return False
+        return False
+
     def dispatch_menu_item(self, item_id, payload):
         try:
             message = Message(**payload)
@@ -660,13 +931,7 @@ class PluginHost:
 
     def stop(self):
         while self._loaded:
-            plugin_id, module_name, instance = self._loaded.pop()
-            instance._update_hooks.clear()
-            instance._send_priority = None
-            instance._menu_items.clear()
-            self._unload_one(instance, module_name)
-            self._ids.discard(plugin_id)
-            _write_log(f"Plugin Host: unloaded {plugin_id}")
+            self._unload_plugin(self._loaded[-1][0])
         self._seen.clear()
         self._recent.clear()
         self._created.clear()

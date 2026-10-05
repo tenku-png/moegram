@@ -209,7 +209,17 @@ Event smoke подаёт синтетические DTO через настоя�
 
 `BasePlugin.add_on_send_message_hook(priority=0)` регистрирует `on_send_message_hook(account, params)`. Перед обычной текстовой отправкой ApiWrap передаёт detached params.message на существующий Python worker; Qt loop продолжает работу. DEFAULT сохраняет текст, MODIFY применяет новый, MODIFY_FINAL завершает chain, CANCEL отменяет отправку. Exceptions отдельного hook не мешают следующим. При изменении текста прежние entities/preview очищаются. Поля SendMessageParams кроме message пока не моделируются. Из plugins нельзя самостоятельно инициировать Telegram send/request.
 
-`ui.settings` предоставляет только data descriptors Header/Input/Text для используемых keyword fields. Native settings renderer не реализован. `get_setting(key, default)` читает per-plugin JSON `<workdir>/plugin-settings/<id>.json` при load или возвращает default. Setter и management UI отсутствуют. Это storage convention MoeGram, не Android file format.
+`Settings > MoeGram Plugins` показывает плагины в детерминированном порядке имён файлов. У каждого есть переключатель загрузки и кнопка редактирования настроек; выключенный plugin не получает hooks и callbacks, а включение заново загружает его. Состояние сохраняется в `<workdir>/plugin-settings/.enabled.json`. Настройки включённого plugin открываются отдельной страницей с возвратом к списку.
+
+Страница настроек вызывает `create_settings()` на plugin worker, затем рисует нативные TDesktop controls на Qt UI thread. В subset входят `Header`, `Switch`, `Input`, `Text` и `Divider`; неизвестные элементы пропускаются с записью в лог, а ошибка `create_settings()` показывает строку ошибки для plugin. Для `Switch` и `Input` вызывается `on_change(value)` после сохранения. Исключение callback записывается в лог и не прерывает UI или другие плагины. В Python передаются только строковые metadata, key/value и bool; Qt widgets и pointers не передаются.
+
+`get_setting(key, default)` и `set_setting(key, value, reload_settings=False)` используют JSON `<workdir>/plugin-settings/<plugin-id>.json`. Значения разделены по plugin ID и сохраняются атомарной заменой файла. `create_settings()` вызывается заново при открытии раздела, поэтому страница отражает текущий список загруженных plugins; группы идут в детерминированном порядке имён файлов. `reload_settings=True` обновляет открытое представление. Android-only параметры вроде icons, long-click, accent/red formatting и callbacks для `Text` игнорируются; `Custom`, Selector, EditText и произвольные Android views не поддерживаются. Это desktop subset ExteraGram API, а не Android file format. См. [официальный контракт ExteraGram](https://plugins.exteragram.app/docs/plugin-settings).
+
+Проверка адаптера без GUI:
+
+```bash
+python -B Telegram/SourceFiles/plugins/tests/check_plugin_settings.py
+```
 
 ```bash
 python -B Telegram/SourceFiles/plugins/tests/check_hello_command.py
@@ -220,13 +230,13 @@ out/arch-debug/Telegram/SourceFiles/plugins/moegram_send_smoke \
 
 Smoke не отправляет Telegram сообщения. Подробные локальные integration-отчёты хранятся только в игнорируемом `.dev-notes/`.
 
-## Request hooks (SDK 0.5.0, API 1)
+## Request hooks (SDK 0.6.0, API 1)
 
-Поддержаны pre-request CANCEL для typing и MODIFY offline для updateStatus; post-request callbacks получают read-only Bool/RPC error DTOs. `ui.settings.Switch` — data descriptor без UI. Сигнатуры, порядок, unload, границы subset и команды тестов: [REQUEST_HOOKS.md](docs/REQUEST_HOOKS.md).
+Поддержаны pre-request CANCEL для typing и MODIFY offline для updateStatus; post-request callbacks получают read-only Bool/RPC error DTOs. Сигнатуры, порядок, unload, границы subset и команды тестов: [REQUEST_HOOKS.md](docs/REQUEST_HOOKS.md).
 
 ## UI compatibility slice (SDK 0.5.0, API 1)
 
-Поддержаны `MenuItemData` для `MESSAGE_CONTEXT_MENU` и `show_toast(text)`. Click callback получает `account`, `dialog_id` и immutable `Message`; при равном priority порядок задают имя plugin-файла и порядок регистрации. Callback работают на worker thread, toast доставляется на Qt UI thread; исключения изолируются, а unload снимает menu registrations. Этот срез не реализует Android `ui.settings`, chat/profile menus, dialogs, overlays, произвольные widgets, icons/subtext или MVEL conditions. API контракт: [UI_API.md](docs/UI_API.md).
+Контекстное меню сообщений и `show_toast(text)` добавлены в SDK 0.5.0: click callback получает `account`, `dialog_id` и immutable `Message`; при равном priority порядок задают имя plugin-файла и порядок регистрации. Callback работают на worker thread, toast доставляется на Qt UI thread; исключения изолируются, а unload снимает menu registrations. Нативные settings controls добавлены в SDK 0.6.0; см. подраздел выше. Chat/profile menus, dialogs, overlays, произвольные widgets, Android icons/subtext и MVEL conditions не входят в поддерживаемый UI subset. API контракт: [UI_API.md](docs/UI_API.md).
 
 Smoke-команда после настройки Debug build:
 

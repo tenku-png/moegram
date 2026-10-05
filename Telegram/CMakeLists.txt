@@ -1964,6 +1964,8 @@ PRIVATE
     settings/sections/settings_local_storage.cpp
     settings/sections/settings_local_storage.h
     settings/sections/settings_main.cpp
+    settings/sections/settings_moegram_plugins.cpp
+    settings/sections/settings_moegram_plugins.h
     settings/sections/settings_main.h
     settings/settings_recent_searches.cpp
     settings/settings_recent_searches.h
