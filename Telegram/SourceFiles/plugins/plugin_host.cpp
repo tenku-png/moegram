@@ -6,11 +6,14 @@
 #include "runtime_source.h"
 
 #include <QtCore/QDir>
-#include <QtCore/QThread>
+#include <QtCore/QMetaObject>
 #include <QtCore/QObject>
+#include <QtCore/QThread>
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <variant>
@@ -20,6 +23,7 @@ namespace {
 
 Host *ActiveHost = nullptr;
 Host::Logger *RuntimeLogger = nullptr;
+std::function<void(QString)> *RuntimeToast = nullptr;
 thread_local int NativeEventDepth = 0;
 
 struct PythonDeleter {
@@ -89,6 +93,76 @@ PyMethodDef LogMethod = {
 	nullptr,
 };
 
+PyObject *ShowToast(PyObject *, PyObject *args) {
+	PyObject *text = nullptr;
+	if (!PyArg_ParseTuple(args, "U", &text)) {
+		return nullptr;
+	}
+	const auto callback = RuntimeToast;
+	if (!callback) {
+		PyErr_SetString(PyExc_RuntimeError, "Plugin UI is stopped");
+		return nullptr;
+	}
+	auto length = Py_ssize_t();
+	const auto value = PyUnicode_AsUTF8AndSize(text, &length);
+	if (!value) {
+		return nullptr;
+	}
+	try {
+		(*callback)(QString::fromUtf8(value, length));
+	} catch (...) {
+		PyErr_SetString(PyExc_RuntimeError, "Client toast callback failed");
+		return nullptr;
+	}
+	Py_RETURN_NONE;
+}
+
+PyMethodDef ToastMethod = {
+	"_show_toast",
+	ShowToast,
+	METH_VARARGS,
+	nullptr,
+};
+
+std::optional<QString> ReadPythonString(PyObject *object) {
+	if (!PyUnicode_Check(object)) {
+		return std::nullopt;
+	}
+	auto length = Py_ssize_t();
+	const auto value = PyUnicode_AsUTF8AndSize(object, &length);
+	return value
+		? std::optional<QString>(QString::fromUtf8(value, length))
+		: std::nullopt;
+}
+
+PythonObject MessagePayload(const MessageEvent &message) {
+	auto payload = PythonObject(PyDict_New());
+	const auto put = [&](const char *key, PythonObject value) {
+		return payload && value
+			&& PyDict_SetItemString(payload.get(), key, value.get()) == 0;
+	};
+	const auto integer = [](std::optional<qint64> value) {
+		return value
+			? PythonObject(PyLong_FromLongLong(*value))
+			: PythonObject(Py_NewRef(Py_None));
+	};
+	const auto encoded = message.text.value_or(QString()).toUtf8();
+	auto text = message.text
+		? PythonObject(PyUnicode_DecodeUTF8(
+			encoded.constData(), encoded.size(), "strict"))
+		: PythonObject(Py_NewRef(Py_None));
+	const auto valid = put("account_id", PythonObject(
+		PyLong_FromUnsignedLongLong(message.accountId)))
+		&& put("message_id", PythonObject(PyLong_FromLongLong(message.messageId)))
+		&& put("chat_id", integer(message.chatId))
+		&& put("sender_id", integer(message.senderId))
+		&& put("text", std::move(text))
+		&& put("outgoing", message.outgoing
+			? PythonObject(PyBool_FromLong(*message.outgoing))
+			: PythonObject(Py_NewRef(Py_None)));
+	return valid ? std::move(payload) : PythonObject();
+}
+
 }
 
 struct Host::Private {
@@ -101,25 +175,38 @@ struct Host::Private {
 		RequestEvent event;
 		RequestCallback done;
 	};
-	using Job = std::variant<UpdateEvent, SendRequest, RequestJob, RequestResultEvent>;
+	struct MenuClickRequest {
+		QString id;
+		MessageEvent message;
+	};
+	using Job = std::variant<
+		UpdateEvent,
+		SendRequest,
+		RequestJob,
+		RequestResultEvent,
+		MenuClickRequest>;
 	Logger logger;
+	ToastCallback toastCallback;
 	QThread *owner = QThread::currentThread();
 	PyObject *runtime = nullptr;
 	PyObject *manager = nullptr;
 	PyThreadState *threadState = nullptr;
 	bool initialized = false;
 	int loaded = 0;
+	std::vector<MessageMenuItem> menuItems;
 	std::mutex mutex;
 	std::condition_variable ready;
 	std::deque<Job> queue;
 	std::unique_ptr<QObject> delivery;
+	std::function<void(QString)> toastRequest;
 	std::thread worker;
 	bool accepting = false;
 };
 
-Host::Host(Logger logger)
+Host::Host(Logger logger, ToastCallback toast)
 : _private(std::make_unique<Private>()) {
 	_private->logger = std::move(logger);
+	_private->toastCallback = std::move(toast);
 }
 
 Host::~Host() {
@@ -137,6 +224,22 @@ bool Host::start(const QString &directory) {
 			.arg(directory));
 		return false;
 	}
+	_private->delivery = std::make_unique<QObject>();
+	_private->toastRequest = [this](QString text) {
+		if (!_private->delivery) {
+			return;
+		}
+		const auto callback = _private->toastCallback;
+		QMetaObject::invokeMethod(
+			_private->delivery.get(),
+			[callback, text = std::move(text)] {
+				if (callback) {
+					callback(text);
+				}
+			},
+			Qt::QueuedConnection);
+	};
+	RuntimeToast = &_private->toastRequest;
 
 	auto config = PyConfig();
 	PyConfig_InitIsolatedConfig(&config);
@@ -155,6 +258,8 @@ bool Host::start(const QString &directory) {
 		if (Py_IsInitialized()) {
 			Py_FinalizeEx();
 		}
+		RuntimeToast = nullptr;
+		_private->delivery.reset();
 		return false;
 	}
 	_private->initialized = true;
@@ -166,11 +271,15 @@ bool Host::start(const QString &directory) {
 		_private->runtime = PyModule_New("_moegram_runtime");
 		RuntimeLogger = &_private->logger;
 		const auto bridge = PythonObject(PyCFunction_New(&LogMethod, nullptr));
+		const auto toastBridge = PythonObject(
+			PyCFunction_New(&ToastMethod, nullptr));
 		const auto globals = _private->runtime
 			? PyModule_GetDict(_private->runtime)
 			: nullptr;
-		const auto registered = globals && bridge
+		const auto registered = globals && bridge && toastBridge
 			&& (PyDict_SetItemString(globals, "_write_log", bridge.get()) == 0)
+			&& (PyDict_SetItemString(
+				globals, "_show_toast", toastBridge.get()) == 0)
 			&& (PyDict_SetItemString(
 				PyImport_GetModuleDict(), "_moegram_runtime", _private->runtime) == 0);
 		const auto executed = registered
@@ -192,6 +301,50 @@ bool Host::start(const QString &directory) {
 			_private->loaded = int(PyLong_AsLong(result.get()));
 			success = !PyErr_Occurred();
 		}
+		const auto menuItems = success
+			? PythonObject(PyObject_CallMethod(
+				_private->manager, "message_menu_items", nullptr))
+			: PythonObject();
+		const auto sequence = menuItems
+			? PythonObject(PySequence_Fast(
+				menuItems.get(), "Menu item list must be a sequence"))
+			: PythonObject();
+		if (success && !sequence) {
+			success = false;
+		}
+		if (success) {
+			const auto size = PySequence_Fast_GET_SIZE(sequence.get());
+			const auto values = PySequence_Fast_ITEMS(sequence.get());
+			for (auto i = Py_ssize_t(); i != size; ++i) {
+				const auto tuple = values[i];
+				if (!PyTuple_Check(tuple) || PyTuple_Size(tuple) != 3) {
+					PyErr_SetString(PyExc_TypeError, "Invalid menu item descriptor");
+					success = false;
+					break;
+				}
+				const auto id = ReadPythonString(PyTuple_GetItem(tuple, 0));
+				const auto text = ReadPythonString(PyTuple_GetItem(tuple, 1));
+				const auto priorityValue = PyLong_AsLong(PyTuple_GetItem(tuple, 2));
+				if (!id || !text || PyErr_Occurred()
+					|| priorityValue < std::numeric_limits<int>::min()
+					|| priorityValue > std::numeric_limits<int>::max()) {
+					if (!PyErr_Occurred()) {
+						PyErr_SetString(PyExc_ValueError, "Invalid menu item descriptor");
+					}
+					success = false;
+					break;
+				}
+				_private->menuItems.push_back({
+					*id,
+					*text,
+					int(priorityValue),
+				});
+			}
+		}
+		if (success) {
+			_private->logger(u"Plugin Host: registered %1 message context menu item(s)"_q
+				.arg(_private->menuItems.size()));
+		}
 		if (!success) {
 			_private->logger(u"Plugin Host: startup failed: %1"_q
 				.arg(TakePythonError()));
@@ -202,7 +355,6 @@ bool Host::start(const QString &directory) {
 		stop();
 	}
 	if (success) {
-		_private->delivery = std::make_unique<QObject>();
 		_private->accepting = true;
 		_private->worker = std::thread([this] {
 			while (true) {
@@ -219,6 +371,28 @@ bool Host::start(const QString &directory) {
 					_private->queue.pop_front();
 				}
 				const auto gil = PyGILState_Ensure();
+				if (auto menu = std::get_if<Private::MenuClickRequest>(&job)) {
+					{
+						const auto idText = menu->id.toUtf8();
+						const auto id = PythonObject(PyUnicode_DecodeUTF8(
+							idText.constData(), idText.size(), "strict"));
+						const auto payload = MessagePayload(menu->message);
+						const auto result = (id && payload)
+							? PythonObject(PyObject_CallMethod(
+								_private->manager,
+								"dispatch_menu_item",
+								"OO",
+								id.get(),
+								payload.get()))
+							: PythonObject();
+						if (!result) {
+							_private->logger(u"Plugin Host: menu dispatch failed: %1"_q
+								.arg(TakePythonError()));
+						}
+					}
+					PyGILState_Release(gil);
+					continue;
+				}
 				if (auto request = std::get_if<Private::RequestJob>(&job)) {
 					auto filtered = std::optional<RequestEvent>(request->event);
 					{
@@ -380,6 +554,7 @@ void Host::stop() {
 	if (ActiveHost == this) {
 		ActiveHost = nullptr;
 	}
+	_private->menuItems.clear();
 	{
 		const auto lock = std::lock_guard(_private->mutex);
 		_private->accepting = false;
@@ -400,6 +575,7 @@ void Host::stop() {
 				.arg(TakePythonError()));
 		}
 	}
+	RuntimeToast = nullptr;
 	Py_CLEAR(_private->manager);
 	Py_CLEAR(_private->runtime);
 	_private->loaded = 0;
@@ -479,6 +655,41 @@ bool Host::post(RequestResultEvent event) {
 	_private->queue.push_back(std::move(event));
 	_private->ready.notify_one();
 	return true;
+}
+
+std::vector<MessageMenuItem> Host::messageMenuItems() const {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	return _private->menuItems;
+}
+
+bool Host::invokeMessageMenuItem(QString id, MessageEvent message) {
+	Q_ASSERT(QThread::currentThread() == _private->owner);
+	const auto lock = std::lock_guard(_private->mutex);
+	if (!_private->accepting
+		|| !_private->loaded
+		|| _private->queue.size() >= 4096
+		|| !std::any_of(
+			_private->menuItems.begin(),
+			_private->menuItems.end(),
+			[&](const auto &item) { return item.id == id; })) {
+		return false;
+	}
+	_private->queue.push_back(Private::MenuClickRequest{
+		std::move(id),
+		std::move(message),
+	});
+	_private->ready.notify_one();
+	return true;
+}
+
+std::vector<MessageMenuItem> MessageMenuItems() {
+	return ActiveHost ? ActiveHost->messageMenuItems()
+		: std::vector<MessageMenuItem>();
+}
+
+bool InvokeMessageMenuItem(QString id, MessageEvent message) {
+	return ActiveHost
+		&& ActiveHost->invokeMessageMenuItem(std::move(id), std::move(message));
 }
 
 bool RequestHooksEnabled() {

@@ -16,7 +16,7 @@ class _LogHandler(logging.Handler):
         _write_log(self.format(record))
 
 
-SDK_VERSION = "0.4.0"
+SDK_VERSION = "0.5.0"
 API_VERSION = 1
 
 
@@ -196,6 +196,34 @@ class Update:
         return peer.channel_id if peer else 0
 
 
+class MenuItemType(Enum):
+    MESSAGE_CONTEXT_MENU = "MESSAGE_CONTEXT_MENU"
+    DRAWER_MENU = "DRAWER_MENU"
+    MAIN_MENU = "MAIN_MENU"
+    CHAT_ACTION_MENU = "CHAT_ACTION_MENU"
+    PROFILE_ACTION_MENU = "PROFILE_ACTION_MENU"
+
+
+@dataclass
+class MenuItemData:
+    menu_type: MenuItemType
+    text: str
+    on_click: object
+    item_id: str | None = None
+    icon: str | None = None
+    subtext: str | None = None
+    condition: str | None = None
+    priority: int = 0
+
+
+def show_toast(text):
+    if not isinstance(text, str):
+        raise TypeError("Toast text must be a string")
+    text.encode("utf-8")
+    import _moegram_runtime
+    _moegram_runtime._show_toast(text)
+
+
 class BasePlugin:
     def __init__(self):
         self.id = ""
@@ -203,6 +231,7 @@ class BasePlugin:
         self.version = ""
         self._update_hooks = {}
         self._send_priority = None
+        self._menu_items = []
         self._settings = {}
         self.logger = logging.getLogger("plugin.unbound")
 
@@ -254,6 +283,33 @@ class BasePlugin:
     def on_message_delete(self, message: Message):
         pass
 
+    def add_menu_item(self, item: MenuItemData):
+        if not isinstance(item, MenuItemData):
+            raise TypeError("Menu item must be MenuItemData")
+        if item.menu_type is not MenuItemType.MESSAGE_CONTEXT_MENU:
+            raise ValueError("Only MESSAGE_CONTEXT_MENU is supported")
+        if not isinstance(item.text, str) or not item.text.strip():
+            raise ValueError("Menu item text must be a nonempty string")
+        item.text.encode("utf-8")
+        if not callable(item.on_click):
+            raise TypeError("Menu item on_click must be callable")
+        if type(item.priority) is not int:
+            raise TypeError("Menu item priority must be an integer")
+        item_id = item.item_id
+        if item_id is not None:
+            if not isinstance(item_id, str) or not item_id:
+                raise ValueError("Menu item id must be a nonempty string")
+            item_id.encode("utf-8")
+        else:
+            item_id = f"message_context_{len(self._menu_items) + 1}"
+        if any(existing_id == item_id for existing_id, *_ in self._menu_items):
+            raise ValueError(f"Duplicate menu item id: {item_id}")
+        self._menu_items.append((item_id, item.text, item.priority, item.on_click))
+        return item_id
+
+    def show_toast(self, text):
+        show_toast(text)
+
 
 _base_module = types.ModuleType("base_plugin")
 _base_module.BasePlugin = BasePlugin
@@ -262,6 +318,9 @@ _base_module.API_VERSION = API_VERSION
 _base_module.Message = Message
 _base_module.Update = Update
 _base_module.Peer = Peer
+_base_module.MenuItemData = MenuItemData
+_base_module.MenuItemType = MenuItemType
+_base_module.show_toast = show_toast
 _base_module.HookResult = HookResult
 _base_module.HookStrategy = HookStrategy
 sys.modules["base_plugin"] = _base_module
@@ -371,6 +430,7 @@ class PluginHost:
             instance.version = metadata["__version__"]
             instance._update_hooks = {}
             instance._send_priority = None
+            instance._menu_items = []
             instance._settings = {}
             settings_path = path.parent.parent / "plugin-settings" / f"{plugin_id}.json"
             if settings_path.is_file():
@@ -562,11 +622,48 @@ class PluginHost:
                 except BaseException:
                     _report_failure(f"{callback} failed: {plugin_id}")
 
+    def message_menu_items(self):
+        items = []
+        for plugin_order, (plugin_id, _, instance) in enumerate(self._loaded):
+            for item_order, (item_id, text, priority, _) in enumerate(
+                    instance._menu_items):
+                items.append((f"{plugin_id}:{item_id}", text, priority,
+                              plugin_order, item_order))
+        items.sort(key=lambda item: (-item[2], item[3], item[4]))
+        return [(item_id, text, priority)
+                for item_id, text, priority, _, _ in items]
+
+    def dispatch_menu_item(self, item_id, payload):
+        try:
+            message = Message(**payload)
+        except BaseException:
+            _report_failure("message menu snapshot construction failed")
+            return
+        context = {
+            "account": message.account_id,
+            "dialog_id": message.chat_id,
+            "message": message,
+        }
+        for plugin_id, _, instance in self._loaded:
+            prefix = f"{plugin_id}:"
+            if not item_id.startswith(prefix):
+                continue
+            local_id = item_id[len(prefix):]
+            for registered_id, _, _, callback in instance._menu_items:
+                if registered_id != local_id:
+                    continue
+                try:
+                    callback(context)
+                except BaseException:
+                    _report_failure(f"message menu callback failed: {plugin_id}")
+                return
+
     def stop(self):
         while self._loaded:
             plugin_id, module_name, instance = self._loaded.pop()
             instance._update_hooks.clear()
             instance._send_priority = None
+            instance._menu_items.clear()
             self._unload_one(instance, module_name)
             self._ids.discard(plugin_id)
             _write_log(f"Plugin Host: unloaded {plugin_id}")

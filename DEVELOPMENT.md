@@ -159,7 +159,7 @@ out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -quit
 
 PoC проверен на Arch Linux: Debug-сборка с Qt 6.11.2 и CPython 3.14.7, smoke-тест embedded host, реальные запуски клиента через Wayland и Qt offscreen. В обоих режимах проверены load/unload `hello_world`, намеренный `RuntimeError` в его копии, загрузка следующего плагина после ошибки и завершение через `-quit` с кодом `0`.
 
-## Минимальный Event API (SDK 0.4.0, API 1)
+## Минимальный Event API (SDK 0.5.0, API 1)
 
 `from base_plugin import BasePlugin, Message, SDK_VERSION, API_VERSION`. Metadata `__moegram_api_version__ = "1"` фиксирует major-контракт MoeGram; если поле отсутствует, используется API 1. Другая версия отклоняется через AST до исполнения файла. `SDK_VERSION` описывает версию desktop SDK, `API_VERSION` — совместимость DTO/callback. Несовместимые изменения требуют нового major API. Это отдельная нумерация: она не означает поддержку Android SDK ExteraGram 1.4.x; его `__sdk_version__` не является проверкой совместимости MoeGram.
 
@@ -220,9 +220,21 @@ out/arch-debug/Telegram/SourceFiles/plugins/moegram_send_smoke \
 
 Smoke не отправляет Telegram сообщения. Подробные локальные integration-отчёты хранятся только в игнорируемом `.dev-notes/`.
 
-## Request hooks (SDK 0.4.0, API 1)
+## Request hooks (SDK 0.5.0, API 1)
 
 Поддержаны pre-request CANCEL для typing и MODIFY offline для updateStatus; post-request callbacks получают read-only Bool/RPC error DTOs. `ui.settings.Switch` — data descriptor без UI. Сигнатуры, порядок, unload, границы subset и команды тестов: [REQUEST_HOOKS.md](docs/REQUEST_HOOKS.md).
+
+## UI compatibility slice (SDK 0.5.0, API 1)
+
+Поддержаны `MenuItemData` для `MESSAGE_CONTEXT_MENU` и `show_toast(text)`. Click callback получает `account`, `dialog_id` и immutable `Message`; при равном priority порядок задают имя plugin-файла и порядок регистрации. Callback работают на worker thread, toast доставляется на Qt UI thread; исключения изолируются, а unload снимает menu registrations. Этот срез не реализует Android `ui.settings`, chat/profile menus, dialogs, overlays, произвольные widgets, icons/subtext или MVEL conditions. API контракт: [UI_API.md](docs/UI_API.md).
+
+Smoke-команда после настройки Debug build:
+
+```bash
+cmake --build out/arch-debug --target moegram_menu_smoke --parallel 8
+out/arch-debug/Telegram/SourceFiles/plugins/moegram_menu_smoke \
+  "$PWD/plugins/message_info.py"
+```
 
 
 ## Структура AyuGram и Telegram Desktop

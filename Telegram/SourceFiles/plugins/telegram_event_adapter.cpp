@@ -149,4 +149,24 @@ MoeGram::Plugins::MessageEvent DeletedMessageSnapshot(
 	return event;
 }
 
+MessageEvent MessageSnapshot(
+		not_null<Main::Session*> session,
+		not_null<HistoryItem*> item) {
+	auto event = MessageEvent();
+	event.kind = EventKind::Message;
+	event.accountId = session->uniqueId();
+	event.messageId = item->id.bare;
+	event.chatId = DialogId(item->history()->peer->id);
+	if (item->hasRealFromId()) {
+		event.senderId = DialogId(item->from()->id);
+	} else if (peerIsUser(item->history()->peer->id)) {
+		event.senderId = DialogId(item->out()
+			? session->userPeerId()
+			: item->history()->peer->id);
+	}
+	event.text = item->originalText().text;
+	event.outgoing = item->out();
+	return event;
+}
+
 }

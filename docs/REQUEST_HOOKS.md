@@ -1,4 +1,4 @@
-# Request hooks — SDK 0.4.0, API 1
+# Request hooks — SDK 0.5.0, API 1
 
 Сигнатуры ExteraGram: `add_hook(name, match_substring=False, priority=0)`,
 `remove_hook(name)`, `pre_request_hook(request_name, account, request)` и
