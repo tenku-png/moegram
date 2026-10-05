@@ -1,6 +1,6 @@
 # Event API: ExteraGram compatibility и integration-проверка
 
-MoeGram SDK **0.3.0**, DTO API **1**. Контракт сверён с [ExteraGram Plugin Class](https://plugins.exteragram.app/docs/plugin-class) и официальными `base_plugin.pyi` из [SDK 1.4.5.7 stable](https://github.com/exteraSquad/plugins-pysdk-builds/releases/tag/sdk-v1.4.5.7-stable-37208006129-1), asset `stubs.zip` → `pyi-files.zip`. Stubs исследованы как декларации, код Android SDK не выполнялся и не копировался в клиент.
+MoeGram SDK **0.4.0**, DTO API **1**. Контракт сверён с [ExteraGram Plugin Class](https://plugins.exteragram.app/docs/plugin-class) и официальными `base_plugin.pyi` из [SDK 1.4.5.7 stable](https://github.com/exteraSquad/plugins-pysdk-builds/releases/tag/sdk-v1.4.5.7-stable-37208006129-1), asset `stubs.zip` → `pyi-files.zip`. Stubs исследованы как декларации, код Android SDK не выполнялся и не копировался в клиент.
 
 ## Контракт ExteraGram
 
@@ -31,7 +31,7 @@ MoeGram SDK **0.3.0**, DTO API **1**. Контракт сверён с [ExteraGr
 - `account` — стабильный user ID с test DC shift (`Main::Session::uniqueId()`), не Android slot index. Операций с аккаунтом SDK не предоставляет.
 - `chat_id` и `sender_id` используют signed Bot API convention: user `id`, group `-id`, channel `-1000000000000-id`. TL peer wrappers содержат bare positive ID. Старый `Message.getDialogId()` продолжает возвращать canonical `chat_id`; Android channel dialog ID отличается.
 - `on_message`, `on_message_edit`, `on_message_delete` — MoeGram extensions. `on_message` получает только incoming; hook получает native incoming **и outgoing**. Edits/deletes включают оба направления.
-- Raw entities/media, произвольные TL fields/classes, reflection, request hooks, container hooks, UI renderer/independent send/network API отсутствуют. Отдельно добавлен text outgoing hook для исходного hello_command, см. [HELLO_COMMAND_COMPATIBILITY.md](HELLO_COMMAND_COMPATIBILITY.md). Service messages исключены.
+- Raw entities/media, произвольные TL fields/classes, reflection, container hooks, UI renderer/independent send/network API отсутствуют. Отдельно добавлен text outgoing hook для исходного hello_command, см. [DEVELOPMENT.md](../DEVELOPMENT.md#совместимость-hello_command-текстовый-send-hook). Request subset описан в [REQUEST_HOOKS.md](REQUEST_HOOKS.md). Service messages исключены.
 - В read-only update hook `HookStrategy.CANCEL/MODIFY/MODIFY_FINAL` принимаются как именованные значения, но диагностируются как неподдерживаемые; Telegram update и другие callbacks продолжаются. `HookResult.update` не заменяет DTO. `None` допускается как default observation result.
 - Для short incoming, восстановления new messages через difference, direct local delete responses и short sent acknowledgement публикуется нормализованное model-событие (`source="model"`). Имя сведено к одной из шести форм; исходного short/container объекта нет, `pts`/`pts_count` могут быть `None`. Это не 1:1 wire interception.
 - Для неизвестного delete chat/sender/text/outgoing могут быть `None`. Channel chat ID известен из update. Delete snapshots — последняя локальная копия, а не данные server TL delete. Sender канального поста может отсутствовать; он не подменяется произвольным user ID.
@@ -68,7 +68,7 @@ Compatibility smoke подаёт синтетические updates через �
 
 ## Реальная integration-проверка: состояние
 
-Первый реальный проход выполнен 2026-10-05 на авторизованном локальном workdir с ручными действиями пользователя. Private, basic group и channel доступны. Найдены потеря sender_id при private incoming edit и отсутствие callbacks при локальном delete во всех трёх типах чатов. Минимальные исправления внесены. Повторные private create/edit/local single и batch delete, а также group create/edit прошли; оставшиеся ручные проверки остановлены по просьбе пользователя. Повторные group/channel local delete ещё не выполнены. Подробная matrix и ограничения: [EVENT_API_INTEGRATION.md](EVENT_API_INTEGRATION.md).
+Подробные локальные integration-отчёты хранятся только в игнорируемом `.dev-notes/`.
 
 `TDESKTOP_API_TEST=ON` выбирает API credentials; само по себе оно не доказывает подключение к Telegram test DC. Realm авторизованного аккаунта отдельно не проверялся.
 
@@ -91,4 +91,4 @@ Checker проверяет ровно одно совпадение каждог
 
 ## Проверка опубликованного source
 
-Неизменённый внешний lifecycle plugin проверен через embedded Host и native Debug клиент: 0 изменённых строк, 0 shims. Область проверки и отличия metadata semantics описаны в [EXTERAGRAM_SOURCE_COMPATIBILITY.md](EXTERAGRAM_SOURCE_COMPATIBILITY.md). Этот учебный plugin не проверяет Event hooks.
+Неизменённый внешний lifecycle plugin проверен через embedded Host и native Debug клиент: 0 изменённых строк, 0 shims. Подробный локальный отчёт хранится в `.dev-notes/`. Этот учебный plugin не проверяет Event hooks.
