@@ -28,13 +28,7 @@ add_subdirectory(lib_icu)
 get_filename_component(src_loc SourceFiles REALPATH)
 get_filename_component(res_loc Resources REALPATH)
 
-add_subdirectory(SourceFiles/plugins)
-target_sources(Telegram PRIVATE
-    ${src_loc}/plugins/telegram_event_adapter.cpp
-    ${src_loc}/plugins/telegram_event_adapter.h
-    ${src_loc}/plugins/telegram_request_adapter.cpp
-    ${src_loc}/plugins/telegram_request_adapter.h
-)
+add_subdirectory(SourceFiles/moegram)
 
 include(cmake/telegram_options.cmake)
 include(cmake/lib_ffmpeg.cmake)
@@ -69,7 +63,6 @@ set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 
 target_link_libraries(Telegram
 PRIVATE
-    moegram::plugins
     tdesktop::lib_fido2
     tdesktop::lib_tgcalls
     tdesktop::td_export
@@ -1964,8 +1957,6 @@ PRIVATE
     settings/sections/settings_local_storage.cpp
     settings/sections/settings_local_storage.h
     settings/sections/settings_main.cpp
-    settings/sections/settings_moegram_plugins.cpp
-    settings/sections/settings_moegram_plugins.h
     settings/sections/settings_main.h
     settings/settings_recent_searches.cpp
     settings/settings_recent_searches.h
