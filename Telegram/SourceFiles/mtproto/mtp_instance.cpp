@@ -18,9 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/localstorage.h"
 #include "calls/calls_instance.h"
 #include "main/main_account.h" // Account::configUpdated.
-#include "main/main_domain.h"
-#include "main/main_session.h"
-#include "plugins/telegram_request_adapter.h"
+#include "moegram/bridge/requests.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "lang/lang_instance.h"
@@ -1022,35 +1020,8 @@ void Instance::Private::sendRequest(
 		bool needsLayer,
 		mtpRequestId afterRequestId) {
 	const auto session = getSession(shiftedDcId);
-	auto snapshot = MoeGram::Plugins::RequestHooksEnabled()
-		? MoeGram::Plugins::RequestSnapshot(0, request) : std::nullopt;
-	if (snapshot) {
-		for (const auto &entry : Core::App().domain().accounts()) {
-			const auto current = entry.account->maybeSession();
-			if (current && &entry.account->mtp() == _instance.get()) {
-				snapshot->accountId = current->uniqueId();
-				break;
-			}
-		}
-		if (!snapshot->accountId) {
-			snapshot.reset();
-		}
-	}
-	if (snapshot) {
-		const auto event = *snapshot;
-		callbacks.done = [event, done = std::move(callbacks.done)](
-				const Response &response) mutable {
-			MoeGram::Plugins::ObserveRequestResponse(event, response);
-			return done ? done(response) : true;
-		};
-		callbacks.fail = [event, fail = std::move(callbacks.fail)](
-				const Error &error, const Response &response) {
-			if (error.type() != u"PLUGIN_REQUEST_CANCELLED"_q) {
-				MoeGram::Plugins::ObserveRequestError(event, error);
-			}
-			return fail ? fail(error, response) : true;
-		};
-	}
+	const auto snapshot = MoeGram::Bridge::PrepareRequestHooks(
+		_instance.get(), request, callbacks);
 
 	request->requestId = requestId;
 	storeRequest(requestId, request, std::move(callbacks));
@@ -1083,23 +1054,13 @@ void Instance::Private::sendRequest(
 		session->sendPrepared(request, msCanWait);
 		return;
 	}
-	const auto weak = QPointer<Instance>(_instance.get());
-	MoeGram::Plugins::FilterRequest(*snapshot,
-		[this, weak, request, requestId, shiftedDcId, msCanWait](
-				std::optional<MoeGram::Plugins::RequestEvent> filtered) mutable {
-			if (!weak || !getRequest(requestId)) {
-				return;
-			}
-			if (!filtered) {
-				auto response = Response();
-				response.requestId = requestId;
-				MTPRpcError(MTP_rpc_error(MTP_int(400), MTP_string("PLUGIN_REQUEST_CANCELLED")))
-					.write(response.reply);
-				_instance->processCallback(response);
-				return;
-			}
-			MoeGram::Plugins::ApplyRequestSnapshot(request, *filtered);
-			getSession(shiftedDcId)->sendPrepared(request, msCanWait);
+	MoeGram::Bridge::DispatchRequest(*snapshot, request,
+		[this, weak = QPointer<Instance>(_instance.get()), requestId] {
+			return weak && getRequest(requestId);
+		}, [this, shiftedDcId, msCanWait](const SerializedRequest &prepared) {
+			getSession(shiftedDcId)->sendPrepared(prepared, msCanWait);
+		}, [this](const Response &response) {
+			_instance->processCallback(response);
 		});
 }
 
