@@ -829,7 +829,7 @@ void ScheduledWidget::edit(
 	const auto done = [=](mtpRequestId requestId) {
 		if (requestId == *saveEditMsgRequestId) {
 			*saveEditMsgRequestId = 0;
-			_composeControls->cancelEditMessage();
+			_composeControls->cancelEditMessage(true);
 		}
 	};
 

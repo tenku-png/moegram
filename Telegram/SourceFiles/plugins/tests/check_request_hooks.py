@@ -15,6 +15,7 @@ def check():
     logs = []
     module = types.ModuleType("_request_test_runtime")
     module._write_log = logs.append
+    module._publish_composer = lambda plugin_id, config: None
     sys.modules[module.__name__] = module
     exec(compile(runtime.read_text(), str(runtime), "exec"), module.__dict__)
     with tempfile.TemporaryDirectory() as directory:

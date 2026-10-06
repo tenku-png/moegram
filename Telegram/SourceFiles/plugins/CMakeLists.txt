@@ -16,6 +16,9 @@ target_link_libraries(moegram_plugins PRIVATE Python3::Python desktop-app::lib_b
 
 option(MOEGRAM_PLUGIN_TESTS "Build the embedded plugin host smoke test" OFF)
 if (MOEGRAM_PLUGIN_TESTS)
+    add_executable(moegram_composer_smoke tests/composer_smoke.cpp)
+    init_target(moegram_composer_smoke)
+    target_link_libraries(moegram_composer_smoke PRIVATE moegram::plugins desktop-app::lib_base Qt::Core)
     add_executable(moegram_request_smoke
         tests/request_smoke.cpp
         telegram_request_adapter.cpp

@@ -249,7 +249,7 @@ public:
 	void raisePanels();
 
 	void editMessage(FullMsgId id, const TextSelection &selection);
-	void cancelEditMessage();
+	void cancelEditMessage(bool confirmed = false);
 	void maybeCancelEditMessage(); // Confirm if changed and cancel.
 
 	void replyToMessage(FullReplyTo id);

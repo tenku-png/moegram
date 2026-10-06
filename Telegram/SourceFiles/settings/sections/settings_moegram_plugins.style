@@ -1,0 +1,17 @@
+using "ui/widgets/widgets.style";
+
+pluginManagerPadding: 16px;
+pluginManagerGap: 12px;
+pluginCardHeight: 124px;
+pluginCardIconSize: 40px;
+pluginCardTitleTop: 12px;
+pluginCardMetaTop: 34px;
+pluginCardDescriptionTop: 56px;
+pluginCardActionsTop: 80px;
+pluginCardAction: IconButton(defaultIconButton) {
+	width: 36px;
+	height: 36px;
+}
+pluginManagerToggle: Checkbox(defaultCheckbox) {
+	width: 48px;
+}

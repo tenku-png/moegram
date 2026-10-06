@@ -11,9 +11,11 @@
 #include <QtCore/QThread>
 
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <type_traits>
@@ -25,6 +27,7 @@ namespace {
 Host *ActiveHost = nullptr;
 Host::Logger *RuntimeLogger = nullptr;
 std::function<void(QString)> *RuntimeToast = nullptr;
+Host::ComposerCallback *RuntimeComposer = nullptr;
 thread_local int NativeEventDepth = 0;
 
 struct PythonDeleter {
@@ -121,6 +124,69 @@ PyObject *ShowToast(PyObject *, PyObject *args) {
 PyMethodDef ToastMethod = {
 	"_show_toast",
 	ShowToast,
+	METH_VARARGS,
+	nullptr,
+};
+
+std::optional<QString> ReadPythonString(PyObject *object);
+
+PyObject *PublishComposer(PyObject *, PyObject *args) {
+	const char *id = nullptr;
+	PyObject *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "sO", &id, &payload)) {
+		return nullptr;
+	}
+	auto config = std::optional<ComposerConfig>();
+	if (payload != Py_None) {
+		if (!PyTuple_Check(payload) || PyTuple_Size(payload) != 8) {
+			PyErr_SetString(PyExc_TypeError, "Invalid composer configuration");
+			return nullptr;
+		}
+		config.emplace();
+		auto flags = { &config->insertion, &config->deletion, &config->caret,
+			&config->send, &config->edit };
+		auto index = 0;
+		for (const auto flag : flags) {
+			const auto value = PyTuple_GetItem(payload, index++);
+			if (!PyBool_Check(value)) {
+				PyErr_SetString(PyExc_TypeError, "Composer flags must be bool");
+				return nullptr;
+			}
+			*flag = (value == Py_True);
+		}
+		const auto style = ReadPythonString(PyTuple_GetItem(payload, 7));
+		if (!style || (*style != u"soft"_q && *style != u"pop"_q
+			&& *style != u"bouncy"_q)) {
+			PyErr_SetString(PyExc_ValueError, "Invalid composer style");
+			return nullptr;
+		}
+		config->style = *style;
+		config->speed = PyFloat_AsDouble(PyTuple_GetItem(payload, 5));
+		config->intensity = PyFloat_AsDouble(PyTuple_GetItem(payload, 6));
+		if (PyErr_Occurred()) {
+			return nullptr;
+		}
+		if (!std::isfinite(config->speed) || config->speed < .5 || config->speed > 2.
+			|| !std::isfinite(config->intensity)
+			|| config->intensity < .25 || config->intensity > 2.) {
+			PyErr_SetString(PyExc_ValueError, "Invalid composer speed or intensity");
+			return nullptr;
+		}
+	}
+	try {
+		if (RuntimeComposer) {
+			(*RuntimeComposer)(QString::fromUtf8(id), config);
+		}
+	} catch (...) {
+		PyErr_SetString(PyExc_RuntimeError, "Composer configuration delivery failed");
+		return nullptr;
+	}
+	Py_RETURN_NONE;
+}
+
+PyMethodDef ComposerMethod = {
+	"_publish_composer",
+	PublishComposer,
 	METH_VARARGS,
 	nullptr,
 };
@@ -236,6 +302,33 @@ std::optional<std::vector<PluginSettings>> ReadSettingsSnapshot(
 				}
 				item.kind = SettingKind::Switch;
 				item.checked = (fields[5] == Py_True);
+			} else if (*kind == u"selector"_q) {
+				const auto selection = PythonObject(PySequence_Fast(
+					fields[5], "Invalid selector state"));
+				if (!selection || PySequence_Fast_GET_SIZE(selection.get()) != 2) {
+					return std::nullopt;
+				}
+				const auto parts = PySequence_Fast_ITEMS(selection.get());
+				const auto choices = PythonObject(PySequence_Fast(
+					parts[1], "Invalid selector options"));
+				if (!choices || !PyLong_Check(parts[0]) || PyBool_Check(parts[0])) {
+					return std::nullopt;
+				}
+				const auto count = PySequence_Fast_GET_SIZE(choices.get());
+				const auto selected = PyLong_AsLong(parts[0]);
+				if (PyErr_Occurred() || count < 1 || count > 64
+					|| selected < 0 || selected >= count) {
+					return std::nullopt;
+				}
+				item.kind = SettingKind::Selector;
+				item.selected = int(selected);
+				for (auto i = Py_ssize_t(); i < count; ++i) {
+					const auto label = ReadPythonString(PySequence_Fast_GET_ITEM(choices.get(), i));
+					if (!label) {
+						return std::nullopt;
+					}
+					item.choices.push_back(*label);
+				}
 			} else if (*kind == u"input"_q) {
 				item.kind = SettingKind::Input;
 			} else if (*kind == u"text"_q) {
@@ -254,7 +347,14 @@ std::optional<std::vector<PluginSettings>> ReadSettingsSnapshot(
 	return result;
 }
 
-std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object) {
+std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object, bool &enabled) {
+	if (!PyTuple_Check(object) || PyTuple_Size(object) != 2
+		|| !PyBool_Check(PyTuple_GetItem(object, 0))) {
+		PyErr_SetString(PyExc_TypeError, "Invalid plugin catalog");
+		return std::nullopt;
+	}
+	enabled = PyTuple_GetItem(object, 0) == Py_True;
+	object = PyTuple_GetItem(object, 1);
 	const auto entries = PythonObject(PySequence_Fast(
 		object, "Plugin list must be a sequence"));
 	if (!entries) {
@@ -267,7 +367,7 @@ std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object) {
 	for (auto i = Py_ssize_t(); i != count; ++i) {
 		const auto entry = PythonObject(PySequence_Fast(
 			values[i], "Plugin metadata must be a sequence"));
-		if (!entry || PySequence_Fast_GET_SIZE(entry.get()) != 5) {
+		if (!entry || PySequence_Fast_GET_SIZE(entry.get()) != 11) {
 			if (entry) {
 				PyErr_SetString(PyExc_TypeError, "Invalid plugin metadata");
 			}
@@ -278,7 +378,13 @@ std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object) {
 		const auto name = ReadPythonString(fields[1]);
 		const auto version = ReadPythonString(fields[2]);
 		const auto error = ReadPythonString(fields[4]);
-		if (!id || !name || !version || !error || !PyBool_Check(fields[3])) {
+		const auto author = ReadPythonString(fields[5]);
+		const auto description = ReadPythonString(fields[6]);
+		const auto declared = ReadPythonString(fields[7]);
+		const auto detected = ReadPythonString(fields[8]);
+		if (!id || !name || !version || !error || !author || !description
+			|| !declared || !detected || !PyBool_Check(fields[3])
+			|| !PyBool_Check(fields[9]) || !PyBool_Check(fields[10])) {
 			if (!PyErr_Occurred()) {
 				PyErr_SetString(PyExc_TypeError, "Invalid plugin metadata fields");
 			}
@@ -289,6 +395,12 @@ std::optional<std::vector<PluginInfo>> ReadPluginsSnapshot(PyObject *object) {
 			.name = *name,
 			.version = *version,
 			.error = *error,
+			.author = *author,
+			.description = *description,
+			.declared = *declared,
+			.detected = *detected,
+			.pinned = fields[9] == Py_True,
+			.desiredEnabled = fields[10] == Py_True,
 			.enabled = (fields[3] == Py_True),
 		});
 	}
@@ -358,6 +470,7 @@ struct Host::Private {
 		QString pluginId;
 		bool enabled = false;
 		PluginEnabledCallback done;
+		PluginAction action = PluginAction::Enable;
 	};
 	struct SettingRequest {
 		QString pluginId;
@@ -377,12 +490,17 @@ struct Host::Private {
 		SettingRequest>;
 	Logger logger;
 	ToastCallback toastCallback;
+	ComposerCallback composerCallback;
+	ComposerCallback composerRequest;
+	std::map<QString, uint64> composerRevisions;
+	std::map<QString, bool> composerDisabled;
 	QThread *owner = QThread::currentThread();
 	PyObject *runtime = nullptr;
 	PyObject *manager = nullptr;
 	PyThreadState *threadState = nullptr;
 	bool initialized = false;
 	int loaded = 0;
+	bool pluginsEnabled = true;
 	std::vector<MessageMenuItem> menuItems;
 	std::mutex mutex;
 	std::condition_variable ready;
@@ -393,10 +511,11 @@ struct Host::Private {
 	bool accepting = false;
 };
 
-Host::Host(Logger logger, ToastCallback toast)
+Host::Host(Logger logger, ToastCallback toast, ComposerCallback composer)
 : _private(std::make_unique<Private>()) {
 	_private->logger = std::move(logger);
 	_private->toastCallback = std::move(toast);
+	_private->composerCallback = std::move(composer);
 }
 
 Host::~Host() {
@@ -414,6 +533,8 @@ bool Host::start(const QString &directory) {
 			.arg(directory));
 		return false;
 	}
+	_private->composerRevisions.clear();
+	_private->composerDisabled.clear();
 	_private->delivery = std::make_unique<QObject>();
 	_private->toastRequest = [this](QString text) {
 		if (!_private->delivery) {
@@ -429,6 +550,29 @@ bool Host::start(const QString &directory) {
 			},
 			Qt::QueuedConnection);
 	};
+	_private->composerRequest = [this](QString id, std::optional<ComposerConfig> config) {
+		if (!_private->delivery) {
+			return;
+		}
+		auto revision = uint64();
+		{
+			const auto lock = std::lock_guard(_private->mutex);
+			revision = _private->composerRevisions[id];
+		}
+		QMetaObject::invokeMethod(_private->delivery.get(),
+			[this, id = std::move(id), config, revision] {
+				auto allowed = false;
+				{
+					const auto lock = std::lock_guard(_private->mutex);
+					allowed = revision == _private->composerRevisions[id]
+						&& (!config || !_private->composerDisabled[id]);
+				}
+				if (allowed && _private->composerCallback) {
+					_private->composerCallback(id, config);
+				}
+			}, Qt::QueuedConnection);
+	};
+	RuntimeComposer = &_private->composerRequest;
 	RuntimeToast = &_private->toastRequest;
 
 	auto config = PyConfig();
@@ -449,6 +593,7 @@ bool Host::start(const QString &directory) {
 			Py_FinalizeEx();
 		}
 		RuntimeToast = nullptr;
+		RuntimeComposer = nullptr;
 		_private->delivery.reset();
 		return false;
 	}
@@ -463,10 +608,12 @@ bool Host::start(const QString &directory) {
 		const auto bridge = PythonObject(PyCFunction_New(&LogMethod, nullptr));
 		const auto toastBridge = PythonObject(
 			PyCFunction_New(&ToastMethod, nullptr));
+		const auto composerBridge = PythonObject(PyCFunction_New(&ComposerMethod, nullptr));
 		const auto globals = _private->runtime
 			? PyModule_GetDict(_private->runtime)
 			: nullptr;
-		const auto registered = globals && bridge && toastBridge
+		const auto registered = globals && bridge && toastBridge && composerBridge
+			&& (PyDict_SetItemString(globals, "_publish_composer", composerBridge.get()) == 0)
 			&& (PyDict_SetItemString(globals, "_write_log", bridge.get()) == 0)
 			&& (PyDict_SetItemString(
 				globals, "_show_toast", toastBridge.get()) == 0)
@@ -609,11 +756,12 @@ bool Host::start(const QString &directory) {
 				}
 				if (auto plugins = std::get_if<Private::PluginsRequest>(&job)) {
 					auto snapshot = std::optional<std::vector<PluginInfo>>();
+					auto globalEnabled = true;
 					{
 						const auto result = PythonObject(PyObject_CallMethod(
-							_private->manager, "plugins_snapshot", nullptr));
+							_private->manager, "manager_snapshot", nullptr));
 						if (result) {
-							snapshot = ReadPluginsSnapshot(result.get());
+							snapshot = ReadPluginsSnapshot(result.get(), globalEnabled);
 						}
 						if (!snapshot) {
 							_private->logger(u"Plugin Host: plugin list failed: %1"_q
@@ -623,8 +771,9 @@ bool Host::start(const QString &directory) {
 					}
 					PyGILState_Release(gil);
 					QMetaObject::invokeMethod(_private->delivery.get(),
-						[done = std::move(plugins->done),
+						[this, globalEnabled, done = std::move(plugins->done),
 							plugins = std::move(*snapshot)]() mutable {
+							_private->pluginsEnabled = globalEnabled;
 							if (done) {
 								done(std::move(plugins));
 							}
@@ -633,6 +782,7 @@ bool Host::start(const QString &directory) {
 				}
 				if (auto plugin = std::get_if<Private::PluginEnabledRequest>(&job)) {
 					auto changed = false;
+					auto globalEnabled = true;
 					auto plugins = std::optional<std::vector<PluginInfo>>();
 					auto menuItems = std::optional<std::vector<MessageMenuItem>>();
 					{
@@ -644,10 +794,13 @@ bool Host::start(const QString &directory) {
 						const auto result = (id && enabled)
 							? PythonObject(PyObject_CallMethod(
 								_private->manager,
-								"set_plugin_enabled",
-								"sO",
+								"manage_plugin",
+								"sOs",
 								idBytes.constData(),
-								enabled.get()))
+								enabled.get(),
+								(plugin->action == PluginAction::Global) ? "global"
+								: (plugin->action == PluginAction::Pin) ? "pin"
+								: (plugin->action == PluginAction::Remove) ? "remove" : "enable"))
 							: PythonObject();
 						if (result) {
 							const auto truth = PyObject_IsTrue(result.get());
@@ -656,9 +809,9 @@ bool Host::start(const QString &directory) {
 							}
 						}
 						const auto pluginResult = PythonObject(PyObject_CallMethod(
-							_private->manager, "plugins_snapshot", nullptr));
+							_private->manager, "manager_snapshot", nullptr));
 						if (pluginResult) {
-							plugins = ReadPluginsSnapshot(pluginResult.get());
+							plugins = ReadPluginsSnapshot(pluginResult.get(), globalEnabled);
 						}
 						const auto menuResult = PythonObject(PyObject_CallMethod(
 							_private->manager, "message_menu_items", nullptr));
@@ -674,9 +827,10 @@ bool Host::start(const QString &directory) {
 					QMetaObject::invokeMethod(_private->delivery.get(),
 						[this,
 							done = std::move(plugin->done),
-							changed,
+							changed, globalEnabled,
 							plugins = std::move(plugins),
 							menuItems = std::move(menuItems)]() mutable {
+							_private->pluginsEnabled = globalEnabled;
 							if (plugins && menuItems) {
 								_private->loaded = int(std::ranges::count_if(
 									*plugins,
@@ -706,6 +860,8 @@ bool Host::start(const QString &directory) {
 								const auto bytes = item.toUtf8();
 								return PythonObject(PyUnicode_DecodeUTF8(
 									bytes.constData(), bytes.size(), "strict"));
+							} else if constexpr (std::is_same_v<Type, int>) {
+								return PythonObject(PyLong_FromLong(item));
 							} else {
 								return PythonObject(PyBool_FromLong(item));
 							}
@@ -928,6 +1084,12 @@ void Host::stop() {
 		}
 	}
 	RuntimeToast = nullptr;
+	RuntimeComposer = nullptr;
+	if (_private->composerCallback) {
+		for (const auto &[id, revision] : _private->composerRevisions) {
+			_private->composerCallback(id, std::nullopt);
+		}
+	}
 	Py_CLEAR(_private->manager);
 	Py_CLEAR(_private->runtime);
 	_private->loaded = 0;
@@ -1060,16 +1222,47 @@ bool Host::setPluginEnabled(
 		QString pluginId,
 		bool enabled,
 		PluginEnabledCallback done) {
+	return managePlugin(std::move(pluginId), enabled,
+		PluginAction::Enable, std::move(done));
+}
+
+bool Host::pluginsEnabled() const {
+	return _private->pluginsEnabled;
+}
+
+bool Host::managePlugin(
+		QString pluginId,
+		bool value,
+		PluginAction action,
+		PluginEnabledCallback done) {
 	Q_ASSERT(QThread::currentThread() == _private->owner);
-	const auto lock = std::lock_guard(_private->mutex);
-	if (!_private->accepting || _private->queue.size() >= 4096) {
-		return false;
+	auto cleared = std::vector<QString>();
+	{
+		const auto lock = std::lock_guard(_private->mutex);
+		if (!_private->accepting || _private->queue.size() >= 4096) {
+			return false;
+		}
+		if (action == PluginAction::Global) {
+			for (auto &[id, revision] : _private->composerRevisions) {
+				++revision;
+				_private->composerDisabled[id] = !value;
+				if (!value) cleared.push_back(id);
+			}
+		} else if (action == PluginAction::Enable || action == PluginAction::Remove) {
+			++_private->composerRevisions[pluginId];
+			const auto disabled = !value || action == PluginAction::Remove;
+			_private->composerDisabled[pluginId] = disabled;
+			if (disabled) cleared.push_back(pluginId);
+		}
+		_private->queue.push_back(Private::PluginEnabledRequest{
+			pluginId, value, std::move(done), action,
+		});
 	}
-	_private->queue.push_back(Private::PluginEnabledRequest{
-		std::move(pluginId),
-		enabled,
-		std::move(done),
-	});
+	if (_private->composerCallback) {
+		for (const auto &id : cleared) {
+			_private->composerCallback(id, std::nullopt);
+		}
+	}
 	_private->ready.notify_one();
 	return true;
 }
@@ -1120,6 +1313,19 @@ bool SetPluginEnabled(
 		std::move(pluginId),
 		enabled,
 		std::move(done));
+}
+
+bool PluginsEnabled() {
+	return ActiveHost && ActiveHost->pluginsEnabled();
+}
+
+bool ManagePlugin(
+		QString pluginId,
+		bool value,
+		PluginAction action,
+		Host::PluginEnabledCallback done) {
+	return ActiveHost && ActiveHost->managePlugin(
+		std::move(pluginId), value, action, std::move(done));
 }
 
 bool UpdatePluginSetting(

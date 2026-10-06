@@ -1,5 +1,6 @@
 import ast
 import logging
+import math
 import json
 import os
 from dataclasses import dataclass
@@ -17,8 +18,45 @@ class _LogHandler(logging.Handler):
         _write_log(self.format(record))
 
 
-SDK_VERSION = "0.6.0"
+SDK_VERSION = "0.8.0"
 API_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class ComposerEffects:
+    insertion: str = "none"
+    deletion: str = "none"
+    caret: str = "none"
+    send: str = "none"
+    edit: str = "none"
+    speed: float = 1.0
+    intensity: float = 1.0
+    style: str = "pop"
+
+    def __post_init__(self):
+        if self.style not in ("soft", "pop", "bouncy"):
+            raise ValueError("Unsupported composer style")
+        for field, effect in (("insertion", "pop"), ("deletion", "scatter"),
+                              ("caret", "smooth"), ("send", "fade_out"),
+                              ("edit", "soft")):
+            if getattr(self, field) not in ("none", effect):
+                raise ValueError(f"Unsupported {field} effect")
+        for field, low, high in (("speed", 0.5, 2.0), ("intensity", 0.25, 2.0)):
+            value = getattr(self, field)
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError(f"{field} must be finite")
+            if not low <= value <= high:
+                raise ValueError(f"{field} must be between {low} and {high}")
+
+
+_composer_module = types.ModuleType("moegram.composer")
+_composer_module.ComposerEffects = ComposerEffects
+_composer_module.API_VERSION = 1
+_moegram_module = types.ModuleType("moegram")
+_moegram_module.__path__ = []
+_moegram_module.composer = _composer_module
+sys.modules["moegram"] = _moegram_module
+sys.modules["moegram.composer"] = _composer_module
 
 
 @dataclass
@@ -56,6 +94,18 @@ class Switch:
 
 
 @dataclass
+class Selector:
+    key: str
+    text: str
+    default: int
+    items: list[str]
+    icon: str | None = None
+    on_change: object = None
+    on_long_click: object = None
+    link_alias: str | None = None
+
+
+@dataclass
 class Text:
     text: str
     subtext: str | None = None
@@ -75,6 +125,7 @@ _settings_module.Divider = Divider
 _settings_module.Input = Input
 _settings_module.Text = Text
 _settings_module.Switch = Switch
+_settings_module.Selector = Selector
 _ui_module.settings = _settings_module
 sys.modules["ui"] = _ui_module
 sys.modules["ui.settings"] = _settings_module
@@ -252,6 +303,7 @@ class BasePlugin:
         self._update_hooks = {}
         self._send_priority = None
         self._menu_items = []
+        self._composer_active = False
         self._settings = {}
         self._settings_path = None
         self._setting_callbacks = {}
@@ -267,6 +319,18 @@ class BasePlugin:
 
     def on_plugin_unload(self):
         pass
+
+    def set_composer_effects(self, effects):
+        if not self._composer_active:
+            raise RuntimeError("Composer effects registration requires a loaded plugin")
+        if effects is not None and not isinstance(effects, ComposerEffects):
+            raise TypeError("Expected ComposerEffects or None")
+        payload = None if effects is None else (
+            effects.insertion != "none", effects.deletion != "none",
+            effects.caret != "none", effects.send != "none", effects.edit != "none",
+            float(effects.speed), float(effects.intensity), effects.style,
+        )
+        _publish_composer(self.id, payload)
 
     def create_settings(self):
         return []
@@ -419,6 +483,7 @@ class PluginHost:
         self._plugins = {}
         self._enabled_path = None
         self._enabled_state = {}
+        self._manager_state = {"enabled": True, "pinned": []}
         self._sequence = 0
         self._seen = set()
         self._recent = deque()
@@ -432,13 +497,26 @@ class PluginHost:
         self._ids.clear()
         self._plugins.clear()
         self._enabled_path = Path(directory).parent / "plugin-settings" / ".enabled.json"
+        self._manager_state = {"enabled": True, "pinned": []}
+        self._manager_path = self._enabled_path.with_name(".manager.json")
+        try:
+            state = json.loads(self._manager_path.read_text(encoding="utf-8"))
+            if (type(state) is dict and type(state.get("enabled")) is bool
+                    and type(state.get("pinned")) is list
+                    and all(type(value) is str for value in state["pinned"])):
+                self._manager_state = state
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            _report_failure("plugin manager state load failed")
         enabled = self._read_enabled_state()
         self._enabled_state = dict(enabled)
         for path in sorted(Path(directory).glob("*.py")):
             if path.is_symlink() or not path.is_file() or path.name.startswith("_"):
                 continue
             try:
-                metadata = _metadata(ast.parse(path.read_bytes(), filename=str(path)))
+                tree = ast.parse(path.read_bytes(), filename=str(path))
+                metadata = _metadata(tree)
                 plugin_id = metadata["__id__"]
                 if plugin_id in self._plugins:
                     raise ValueError(f"Duplicate plugin id: {plugin_id}")
@@ -448,13 +526,99 @@ class PluginHost:
                     "version": metadata["__version__"],
                     "error": "",
                 }
+                entry.update(self._presentation(tree))
                 self._plugins[plugin_id] = entry
-                if enabled.get(plugin_id, True) and not self._load_one(path):
+                if self._manager_state["enabled"] and enabled.get(plugin_id, True) and not self._load_one(path):
                     entry["error"] = "Plugin failed to load; see log"
             except BaseException:
                 _report_failure(f"discovery failed: {path.name}")
         _write_log(f"Plugin Host: loaded {len(self._loaded)} plugin(s)")
         return len(self._loaded)
+
+    @staticmethod
+    def _presentation(tree):
+        values = {"author": "", "description": "", "declared": ""}
+        names = {"__author__": "author", "__description__": "description",
+                 "__permissions__": "declared", "__capabilities__": "declared"}
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in names:
+                        try:
+                            value = ast.literal_eval(node.value)
+                            if isinstance(value, (list, tuple)) and all(type(x) is str for x in value):
+                                value = ", ".join(value)
+                            if type(value) is str:
+                                values[names[target.id]] = value[:2048]
+                        except (ValueError, TypeError):
+                            pass
+        references = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        references |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        references |= {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        groups = {
+            "Read messages": {"on_message", "on_message_edit", "on_message_delete", "on_update_hook"},
+            "Send/modify messages": {"add_on_send_message_hook", "on_send_message_hook", "pre_request_hook"},
+            "UI integration": {"add_menu_item", "show_toast", "set_composer_effects", "create_settings"},
+            "Plugin storage": {"get_setting", "set_setting"},
+        }
+        values["detected"] = ", ".join(label for label, symbols in groups.items() if references & symbols)
+        return values
+
+    def manager_snapshot(self):
+        return (self._manager_state["enabled"], [
+            (*row, entry["author"], entry["description"], entry["declared"],
+             entry["detected"], plugin_id in self._manager_state["pinned"],
+             self._enabled_state.get(plugin_id, True))
+            for row in self.plugins_snapshot()
+            for plugin_id in [row[0]] for entry in [self._plugins[plugin_id]]
+        ])
+
+    def manage_plugin(self, plugin_id, enabled, action):
+        if action == "enable":
+            return self.set_plugin_enabled(plugin_id, enabled)
+        if action not in ("global", "pin", "remove") or type(enabled) is not bool:
+            return False
+        entry = self._plugins.get(plugin_id)
+        if action != "global" and entry is None:
+            return False
+        state = dict(self._manager_state)
+        if action == "global":
+            state["enabled"] = enabled
+        elif action == "pin":
+            pins = set(state["pinned"])
+            pins.add(plugin_id) if enabled else pins.discard(plugin_id)
+            state["pinned"] = sorted(pins)
+        else:
+            path = entry["path"]
+            if path.is_symlink() or not path.is_file():
+                return False
+            if not self._write_enabled_state(plugin_id, False):
+                return False
+            self._unload_plugin(plugin_id)
+            try:
+                path.unlink()
+            except OSError:
+                entry["error"] = "Could not remove file; plugin was disabled"
+                _report_failure(f"plugin removal failed: {plugin_id}")
+                return False
+            del self._plugins[plugin_id]
+            return True
+        try:
+            self._manager_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._manager_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+            os.replace(temporary, self._manager_path)
+        except OSError:
+            _report_failure("plugin manager state save failed")
+            return False
+        self._manager_state = state
+        if action == "global":
+            for current_id, current in self._plugins.items():
+                if not enabled:
+                    self._unload_plugin(current_id)
+                elif current_id not in self._ids and self._enabled_state.get(current_id, True):
+                    current["error"] = "" if self._load_one(current["path"]) else "Plugin failed to load; see log"
+        return True
 
     def _read_enabled_state(self):
         path = self._enabled_path
@@ -504,11 +668,11 @@ class PluginHost:
         if entry is None:
             return False
         loaded = plugin_id in self._ids
-        if loaded == enabled:
+        if loaded == enabled and self._enabled_state.get(plugin_id, True) == enabled:
             return True
         if not self._write_enabled_state(plugin_id, enabled):
             return False
-        if enabled:
+        if enabled and self._manager_state["enabled"]:
             if not self._load_one(entry["path"]):
                 entry["error"] = "Plugin failed to load; see log"
                 self._write_enabled_state(plugin_id, False)
@@ -595,6 +759,7 @@ class PluginHost:
                     _report_failure(f"settings load failed: {plugin_id}")
             instance.logger = logging.getLogger(f"plugin.{plugin_id}")
             load_started = True
+            instance._composer_active = True
             instance.on_plugin_load()
             self._loaded.append((plugin_id, module_name, instance))
             self._ids.add(plugin_id)
@@ -612,6 +777,8 @@ class PluginHost:
             return False
 
     def _unload_one(self, instance, module_name):
+        instance._composer_active = False
+        _publish_composer(instance.id, None)
         try:
             instance.on_plugin_unload()
         except BaseException:
@@ -827,6 +994,29 @@ class PluginHost:
                                 descriptor.text, "Text.text"), self._setting_text(
                                 descriptor.subtext, "Text.subtext", optional=True),
                                 "", False))
+                        elif isinstance(descriptor, Selector):
+                            key = self._setting_text(descriptor.key, "selector.key")
+                            if not key or key in seen_keys:
+                                raise ValueError("Invalid or duplicate selector key")
+                            seen_keys.add(key)
+                            title = self._setting_text(descriptor.text, "selector.text")
+                            if not isinstance(descriptor.items, (list, tuple)) or not 0 < len(descriptor.items) <= 64:
+                                raise ValueError("Selector needs 1–64 options")
+                            items = tuple(self._setting_text(item, "selector.items") for item in descriptor.items)
+                            default = descriptor.default
+                            if type(default) is not int or not 0 <= default < len(items):
+                                raise ValueError("Selector.default must be a valid index")
+                            value = instance.get_setting(key, default)
+                            if type(value) is not int or not 0 <= value < len(items):
+                                value = default
+                            instance._setting_types[key] = (int, len(items))
+                            if callable(descriptor.on_change):
+                                instance._setting_callbacks[key] = descriptor.on_change
+                            elif descriptor.on_change is not None:
+                                _write_log(f"Plugin Host: {plugin_id}: selector.on_change is not callable; ignored")
+                            if descriptor.on_long_click is not None:
+                                _write_log(f"Plugin Host: {plugin_id}: selector.on_long_click is unsupported; ignored")
+                            rows.append(("selector", key, title, "", "", (value, items)))
                         elif isinstance(descriptor, (Input, Switch)):
                             kind = "input" if isinstance(descriptor, Input) else "switch"
                             key = self._setting_text(descriptor.key, f"{kind}.key")
@@ -884,7 +1074,8 @@ class PluginHost:
             if current_id != plugin_id:
                 continue
             expected = instance._setting_types.get(key)
-            if expected is None or type(value) is not expected:
+            valid = (type(value) is int and 0 <= value < expected[1]) if isinstance(expected, tuple) else (expected is not None and type(value) is expected)
+            if not valid:
                 _write_log(f"Plugin Host: {plugin_id}: rejected invalid setting update for {key}")
                 return False
             try:
