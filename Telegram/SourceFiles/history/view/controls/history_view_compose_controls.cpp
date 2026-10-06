@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_controls.h"
 
+#include "moegram/composer/composer_bridge.h"
 #include "base/call_delayed.h"
 #include "base/event_filter.h"
 #include "base/options.h"
@@ -2062,7 +2063,7 @@ TextWithTags ComposeControls::getTextWithAppliedMarkdown() const {
 }
 
 void ComposeControls::clear() {
-	_field->prepareComposerTransition(Ui::ComposerTransition::Send);
+	MoeGram::Composer::BeforeSend(_field);
 	// Otherwise cancelReplyMessage() will save the draft.
 	const auto saveTextDraft = !replyingToMessage();
 	setFieldText(
@@ -2683,7 +2684,7 @@ void ComposeControls::initField() {
 		}
 		return false;
 	});
-	_field->enableComposerEffects();
+	MoeGram::Composer::Attach(_field);
 	InitMessageFieldFade(_field, _st.field.textBg);
 	_field->setEditLinkCallback(
 		DefaultEditLinkCallback(_show, _field, &_st.boxField));
@@ -4860,8 +4861,7 @@ void ComposeControls::editMessage(not_null<HistoryItem*> item) {
 		updateControlsGeometry(_wrap->size());
 	}
 
-	_field->prepareComposerTransition(Ui::ComposerTransition::EditEnter);
-	_field->finishComposerTransition();
+	MoeGram::Composer::EnterEdit(_field);
 
 	if (_autocomplete) {
 		InvokeQueued(_autocomplete.get(), [=] {
@@ -4902,9 +4902,7 @@ bool ComposeControls::updateReplaceMediaButton() {
 }
 
 void ComposeControls::cancelEditMessage(bool confirmed) {
-	if (confirmed) {
-		_field->prepareComposerTransition(Ui::ComposerTransition::EditExit);
-	}
+	MoeGram::Composer::BeforeEditExit(_field, confirmed);
 	Expects(_history != nullptr);
 	Expects(draftKeyCurrent() != Data::DraftKey::None());
 

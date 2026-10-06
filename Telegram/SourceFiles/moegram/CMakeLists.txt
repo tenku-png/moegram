@@ -1,6 +1,8 @@
 add_subdirectory(../plugins ${CMAKE_CURRENT_BINARY_DIR}/../plugins)
 
 target_sources(Telegram PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/composer/composer_bridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/composer/composer_bridge.h
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/requests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/requests.h
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/request_context.cpp
