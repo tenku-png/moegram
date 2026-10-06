@@ -31,7 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_element.h"
 #include "core/application.h"
 #include "apiwrap.h"
-#include "plugins/telegram_event_adapter.h"
+#include "moegram/bridge/events.h"
 
 // AyuGram includes
 #include "ayu/ayu_settings.h"
@@ -812,26 +812,13 @@ void Histories::deleteMessages(
 		not_null<History*> history,
 		const QVector<MTPint> &ids,
 		bool revoke) {
-	auto pluginEvent = MoeGram::Plugins::UpdateEvent();
-	if (MoeGram::Plugins::ModelEventsEnabled()) {
-		pluginEvent.accountId = session().uniqueId();
-		pluginEvent.name = history->peer->isChannel()
-			? u"TL_updateDeleteChannelMessages"_q : u"TL_updateDeleteMessages"_q;
-		for (const auto &id : ids) {
-			pluginEvent.messages.push_back(MoeGram::Plugins::DeletedMessageSnapshot(
-				&session(), _owner->message(history->peer->id, id.v), id.v,
-				history->peer->id));
-		}
-	}
+	const auto pluginEvent = MoeGram::Bridge::PrepareDeletedMessages(
+		&session(), history->peer->id, ids);
 	sendRequest(history, RequestType::Delete, [=](Fn<void()> finish) {
 		const auto done = [=](const MTPmessages_AffectedMessages &result) {
 			session().api().applyAffectedMessages(history->peer, result);
-			if (!pluginEvent.messages.empty()) {
-				auto confirmed = pluginEvent;
-				confirmed.pts = result.data().vpts().v;
-				confirmed.ptsCount = result.data().vpts_count().v;
-				MoeGram::Plugins::Publish(std::move(confirmed));
-			}
+			MoeGram::Bridge::PublishDeletedMessages(
+				pluginEvent, result.data().vpts().v, result.data().vpts_count().v);
 			finish();
 			history->requestChatListMessage();
 		};

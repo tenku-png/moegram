@@ -7,8 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 
-#include "plugins/plugin_host.h"
-#include "ui/widgets/fields/composer_effects.h"
+#include "moegram/bridge/application_bridge.h"
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
 #include "data/data_forum.h"
@@ -158,7 +157,7 @@ struct Application::Private {
 	UiIntegration uiIntegration;
 	Settings settings;
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
-	std::unique_ptr<MoeGram::Plugins::Host> pluginHost;
+	std::unique_ptr<MoeGram::Bridge::ApplicationRuntime> pluginRuntime;
 };
 
 Application::Application()
@@ -229,7 +228,7 @@ void Application::closeAdditionalWindows() {
 }
 
 Application::~Application() {
-	_private->pluginHost = nullptr;
+	_private->pluginRuntime = nullptr;
 	if (_saveSettingsTimer && _saveSettingsTimer->isActive()) {
 		Local::writeSettings();
 	}
@@ -438,33 +437,7 @@ void Application::run() {
 
 	processCreatedWindow(_lastActivePrimaryWindow);
 
-	_private->pluginHost = std::make_unique<MoeGram::Plugins::Host>(
-		[](const QString &message) { LOG((message)); },
-		[this](const QString &message) {
-			if (const auto window = activeWindow()) {
-				window->showToast(message);
-			}
-		}, [](QString id, std::optional<MoeGram::Plugins::ComposerConfig> value) {
-			auto config = std::optional<Ui::ComposerEffectsConfig>();
-			if (value) {
-				config = Ui::ComposerEffectsConfig{
-					.insertion = value->insertion,
-					.deletion = value->deletion,
-					.caret = value->caret,
-					.send = value->send,
-					.edit = value->edit,
-					.speed = value->speed,
-					.intensity = value->intensity,
-					.style = (value->style == u"bouncy"_q)
-						? Ui::ComposerEffectStyle::Bouncy
-						: (value->style == u"soft"_q)
-						? Ui::ComposerEffectStyle::Soft
-						: Ui::ComposerEffectStyle::Pop,
-				};
-			}
-			Ui::ComposerEffectsController::SetPlugin(std::move(id), config);
-		});
-	(void)_private->pluginHost->start(cWorkingDir() + u"plugins/"_q);
+	_private->pluginRuntime = std::make_unique<MoeGram::Bridge::ApplicationRuntime>(this);
 
 	Test::Fire(u"launch_finished"_q);
 	Test::Start();

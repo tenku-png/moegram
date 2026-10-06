@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
 
-#include "plugins/telegram_event_adapter.h"
+#include "moegram/bridge/events.h"
 
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -3152,17 +3152,7 @@ void Session::checkFormattedDateUpdates() {
 void Session::processMessagesDeleted(
 		PeerId peerId,
 		const QVector<MTPint> &data) {
-	if (MoeGram::Plugins::ModelEventsEnabled()) {
-		auto event = MoeGram::Plugins::UpdateEvent();
-		event.accountId = _session->uniqueId();
-		event.name = peerIsChannel(peerId)
-			? u"TL_updateDeleteChannelMessages"_q : u"TL_updateDeleteMessages"_q;
-		for (const auto &id : data) {
-			event.messages.push_back(MoeGram::Plugins::DeletedMessageSnapshot(
-				_session, message(peerId, id.v), id.v, peerId));
-		}
-		MoeGram::Plugins::Publish(std::move(event));
-	}
+	MoeGram::Bridge::ObserveDeletedMessages(_session, peerId, data);
 	const auto list = messagesList(peerId);
 	const auto affected = historyLoaded(peerId);
 	if (!list && !affected) {
@@ -3200,16 +3190,7 @@ void Session::processMessagesDeleted(
 }
 
 void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
-	if (MoeGram::Plugins::ModelEventsEnabled()) {
-		auto event = MoeGram::Plugins::UpdateEvent();
-		event.accountId = _session->uniqueId();
-		event.name = u"TL_updateDeleteMessages"_q;
-		for (const auto &id : data) {
-			event.messages.push_back(MoeGram::Plugins::DeletedMessageSnapshot(
-				_session, nonChannelMessage(id.v), id.v));
-		}
-		MoeGram::Plugins::Publish(std::move(event));
-	}
+	MoeGram::Bridge::ObserveDeletedMessages(_session, std::nullopt, data);
 	auto toDestroy = std::vector<not_null<HistoryItem*>>();
 	auto historiesToCheck = base::flat_set<not_null<History*>>();
 	for (const auto &messageId : data) {

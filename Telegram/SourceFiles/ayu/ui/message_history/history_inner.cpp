@@ -43,8 +43,7 @@
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
-#include "plugins/plugin_host.h"
-#include "plugins/telegram_event_adapter.h"
+#include "moegram/ui/message_menu.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
 #include "ui/inactive_press.h"
@@ -1180,13 +1179,7 @@ void InnerWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 								   : 0);
 	const auto messageItem = view ? view->data().get() : nullptr;
 	if (messageItem && !fromId) {
-		const auto snapshot = MoeGram::Plugins::MessageSnapshot(
-			&session(), messageItem);
-		for (const auto &pluginItem : MoeGram::Plugins::MessageMenuItems()) {
-			_menu->addAction(pluginItem.text, [id = pluginItem.id, snapshot] {
-				(void)MoeGram::Plugins::InvokeMessageMenuItem(id, snapshot);
-			});
-		}
+		MoeGram::Ui::AddMessageMenuItems(_menu.get(), &session(), messageItem);
 	}
 	if (lnkPhoto || lnkDocument) {
 		if (isUponSelected > 0) {
