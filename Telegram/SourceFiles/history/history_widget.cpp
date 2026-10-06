@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
 
+#include "moegram/composer/composer_bridge.h"
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
 #include "api/api_bot.h"
@@ -584,7 +585,7 @@ HistoryWidget::HistoryWidget(
 		showPremiumToast(document);
 		return false;
 	});
-	_field->enableComposerEffects();
+	MoeGram::Composer::Attach(_field);
 	InitMessageFieldFade(_field, st::historyComposeField.textBg);
 
 	setupFastButtonMode();
@@ -5450,7 +5451,7 @@ void HistoryWidget::saveEditMessage(Api::SendOptions options) {
 		crl::guard(weak, [=] {
 			if (requestId == _saveEditMsgRequestId) {
 				_saveEditMsgRequestId = 0;
-				_field->prepareComposerTransition(Ui::ComposerTransition::EditExit);
+				MoeGram::Composer::BeforeEditExit(_field);
 				cancelEdit();
 			}
 		})();
@@ -5842,7 +5843,7 @@ void HistoryWidget::sendTextWithTags(
 	session().api().sendMessage(std::move(message), nextLocalMessageId);
 	_justMarkingAsRead = false;
 
-	_field->prepareComposerTransition(Ui::ComposerTransition::Send);
+	MoeGram::Composer::BeforeSend(_field);
 	clearFieldText();
 	if (_preview) {
 		_preview->apply({ .removed = true });
@@ -10407,8 +10408,7 @@ void HistoryWidget::editMessage(
 
 	saveDraftWithTextNow();
 	setInnerFocus();
-	_field->prepareComposerTransition(Ui::ComposerTransition::EditEnter);
-	_field->finishComposerTransition();
+	MoeGram::Composer::EnterEdit(_field);
 }
 
 void HistoryWidget::fillSenderUserpicMenu(
