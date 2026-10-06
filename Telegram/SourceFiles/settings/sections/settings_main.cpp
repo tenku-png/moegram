@@ -396,7 +396,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.keywords = { u"ayu"_q },
 	});
 	builder.addSectionButton({
-		.title = rpl::single(u"MoeGram Plugins"_q),
+		.title = rpl::single(u"Plugins"_q),
 		.targetSection = MoeGramPluginsId(),
 		.icon = { &st::menuIconManage },
 		.keywords = { u"moegram"_q, u"plugins"_q },

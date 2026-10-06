@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 
 #include "plugins/plugin_host.h"
+#include "ui/widgets/fields/composer_effects.h"
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
 #include "data/data_forum.h"
@@ -443,6 +444,25 @@ void Application::run() {
 			if (const auto window = activeWindow()) {
 				window->showToast(message);
 			}
+		}, [](QString id, std::optional<MoeGram::Plugins::ComposerConfig> value) {
+			auto config = std::optional<Ui::ComposerEffectsConfig>();
+			if (value) {
+				config = Ui::ComposerEffectsConfig{
+					.insertion = value->insertion,
+					.deletion = value->deletion,
+					.caret = value->caret,
+					.send = value->send,
+					.edit = value->edit,
+					.speed = value->speed,
+					.intensity = value->intensity,
+					.style = (value->style == u"bouncy"_q)
+						? Ui::ComposerEffectStyle::Bouncy
+						: (value->style == u"soft"_q)
+						? Ui::ComposerEffectStyle::Soft
+						: Ui::ComposerEffectStyle::Pop,
+				};
+			}
+			Ui::ComposerEffectsController::SetPlugin(std::move(id), config);
 		});
 	(void)_private->pluginHost->start(cWorkingDir() + u"plugins/"_q);
 

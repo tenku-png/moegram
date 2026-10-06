@@ -2062,6 +2062,7 @@ TextWithTags ComposeControls::getTextWithAppliedMarkdown() const {
 }
 
 void ComposeControls::clear() {
+	_field->prepareComposerTransition(Ui::ComposerTransition::Send);
 	// Otherwise cancelReplyMessage() will save the draft.
 	const auto saveTextDraft = !replyingToMessage();
 	setFieldText(
@@ -2682,6 +2683,7 @@ void ComposeControls::initField() {
 		}
 		return false;
 	});
+	_field->enableComposerEffects();
 	InitMessageFieldFade(_field, _st.field.textBg);
 	_field->setEditLinkCallback(
 		DefaultEditLinkCallback(_show, _field, &_st.boxField));
@@ -4858,6 +4860,9 @@ void ComposeControls::editMessage(not_null<HistoryItem*> item) {
 		updateControlsGeometry(_wrap->size());
 	}
 
+	_field->prepareComposerTransition(Ui::ComposerTransition::EditEnter);
+	_field->finishComposerTransition();
+
 	if (_autocomplete) {
 		InvokeQueued(_autocomplete.get(), [=] {
 			_autocomplete->requestRefresh();
@@ -4896,7 +4901,10 @@ bool ComposeControls::updateReplaceMediaButton() {
 	return true;
 }
 
-void ComposeControls::cancelEditMessage() {
+void ComposeControls::cancelEditMessage(bool confirmed) {
+	if (confirmed) {
+		_field->prepareComposerTransition(Ui::ComposerTransition::EditExit);
+	}
 	Expects(_history != nullptr);
 	Expects(draftKeyCurrent() != Data::DraftKey::None());
 
