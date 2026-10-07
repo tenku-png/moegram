@@ -55,9 +55,9 @@ C++ передаёт только значения одного `UpdateEvent` в
 
 ```bash
 cmake --build out/arch-debug --target Telegram moegram_compatibility_smoke moegram_event_smoke moegram_plugin_smoke --parallel 8
-out/arch-debug/Telegram/SourceFiles/plugins/moegram_compatibility_smoke "$PWD/plugins/compatibility_logger.py"
-out/arch-debug/Telegram/SourceFiles/plugins/moegram_event_smoke "$PWD/plugins/event_logger.py"
-out/arch-debug/Telegram/SourceFiles/plugins/moegram_plugin_smoke
+out/arch-debug/Telegram/SourceFiles/moegram/engine/moegram_compatibility_smoke "$PWD/plugins/compatibility_logger.py"
+out/arch-debug/Telegram/SourceFiles/moegram/engine/moegram_event_smoke "$PWD/plugins/event_logger.py"
+out/arch-debug/Telegram/SourceFiles/moegram/engine/moegram_plugin_smoke
 ```
 
 Compatibility smoke подаёт синтетические updates через реальный C++ embedded Host. Проверяет private/group/channel IDs, incoming/outgoing, оба edits, single/batch delete, native duplicates и model echoes, object identity между plugins/hook/specialized callback, immutability, registration/removal, priorities, exception isolation, unsupported strategy, unload. Это не замена реальному Telegram integration-тесту.

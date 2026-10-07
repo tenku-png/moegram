@@ -1,3 +1,8 @@
+option(MOEGRAM_PLUGIN_TESTS "Build plugin engine and Telegram integration tests" OFF)
+set(MOEGRAM_ENGINE_TESTS ${MOEGRAM_PLUGIN_TESTS} CACHE BOOL "Build independent engine tests")
+add_subdirectory(${third_party_loc}/moegram-plugin-engine
+    ${CMAKE_CURRENT_BINARY_DIR}/engine)
+
 add_subdirectory(../plugins ${CMAKE_CURRENT_BINARY_DIR}/../plugins)
 
 target_sources(Telegram PRIVATE

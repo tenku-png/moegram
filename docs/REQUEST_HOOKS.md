@@ -49,10 +49,10 @@ Native renderer, сохранение значений и текущий сов�
 ## Автоматические проверки
 
 ```bash
-python -B Telegram/SourceFiles/plugins/tests/check_request_hooks.py
+python -B Telegram/ThirdParty/moegram-plugin-engine/tests/check_request_hooks.py
 cmake --build out/arch-debug --target moegram_request_smoke
 out/arch-debug/Telegram/SourceFiles/plugins/moegram_request_smoke \
-  "$PWD/Telegram/SourceFiles/plugins/tests/fixtures/exteragram_ghost_mode/ghost_mode.py"
+  "$PWD/Telegram/ThirdParty/moegram-plugin-engine/tests/fixtures/exteragram_ghost_mode/ghost_mode.py"
 ```
 
 Tests используют опубликованный неизменённый MIT fixture с pinned provenance;

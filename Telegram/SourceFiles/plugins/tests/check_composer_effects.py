@@ -8,8 +8,8 @@ import types
 
 
 def check():
-    source = Path(__file__).resolve().parent.parent / "runtime.py"
-    root = source.parents[3]
+    source = Path(__file__).resolve().parents[3] / "ThirdParty/moegram-plugin-engine/python/runtime.py"
+    root = Path(__file__).resolve().parents[4]
     logs, configurations = [], []
     module = types.ModuleType("_composer_test_runtime")
     module._write_log = logs.append
@@ -85,7 +85,7 @@ class Plugin(BasePlugin):
         root = Path(directory)
         plugins = root / "plugins"
         plugins.mkdir()
-        shutil.copyfile(source.parents[3] / "plugins/typing_fx.py", plugins / "typing_fx.py")
+        shutil.copyfile(Path(__file__).resolve().parents[4] / "plugins/typing_fx.py", plugins / "typing_fx.py")
         settings = root / "plugin-settings"
         settings.mkdir()
         path = settings / "typing_fx.json"

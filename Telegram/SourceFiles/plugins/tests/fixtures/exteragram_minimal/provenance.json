@@ -1,8 +1,0 @@
-{
-  "repository": "https://github.com/makarworld/exteragram-plugin-skill",
-  "commit": "b6fdffaf017e416eab1fb4bd3aaa984325a2f23e",
-  "path": "examples/minimal.py",
-  "sha256": "eb1140031553c79aaeab1145cbc1bab0744627f3b53d0f094e3fbe77b02e893c",
-  "license": "MIT",
-  "description": "Unmodified published educational lifecycle plugin. Not a production plugin or Event API compatibility proof."
-}
