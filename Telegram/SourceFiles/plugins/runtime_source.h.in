@@ -1,5 +1,0 @@
-#pragma once
-
-inline constexpr auto PluginRuntimeSource = R"moegram_python(
-@plugin_runtime_source@
-)moegram_python";
