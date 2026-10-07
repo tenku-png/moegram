@@ -23,6 +23,7 @@ target_sources(Telegram PRIVATE
     ${src_loc}/settings/sections/settings_moegram_plugins.h
 )
 target_link_libraries(Telegram PRIVATE moegram::plugins)
+target_compile_definitions(Telegram PRIVATE TDESKTOP_DISABLE_AUTOUPDATE)
 
 if (MOEGRAM_PLUGIN_TESTS)
     add_executable(moegram_request_bridge_smoke
