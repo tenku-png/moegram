@@ -410,8 +410,8 @@ private:
 
 	void details(const MoeGram::Plugins::PluginInfo &plugin) {
 		controller()->show(Box([=](not_null<Ui::GenericBox*> box) {
-			box->setTitle(rpl::single(plugin.name));
-			const auto line = [&](QString value, bool warning = false) {
+			box->setTitle(rpl::single(u"Permissions — %1"_q.arg(plugin.name)));
+			const auto line = [=](QString value, bool warning = false) {
 				const auto label = box->addRow(object_ptr<Ui::FlatLabel>(box,
 					value, st::boxLabel), st::boxRowPadding, style::al_justify);
 				if (warning) label->setTextColorOverride(st::attentionButtonFg->c);
@@ -421,7 +421,27 @@ private:
 			line(u"Plugin ID: %1"_q.arg(plugin.id));
 			line(u"Declared capabilities\n%1"_q.arg(plugin.declared.isEmpty() ? u"Not declared"_q : plugin.declared));
 			line(u"Detected API references\n%1"_q.arg(plugin.detected.isEmpty() ? u"None detected"_q : plugin.detected));
-			line(u"Detection is incomplete. Capabilities are informational and are not enforced."_q);
+			const auto permissions = MoeGram::Plugins::PluginPermissions(plugin.id);
+			for (const auto &permission : permissions) {
+				const auto label = permission.capability == u"messages.read"_q ? u"Read messages"_q
+					: permission.capability == u"messages.send"_q ? u"Send messages"_q
+					: permission.capability == u"messages.modify"_q ? u"Modify messages"_q
+					: permission.capability == u"ui"_q ? u"UI access"_q : u"Plugin storage"_q;
+				const auto toggle = box->addRow(object_ptr<Ui::Checkbox>(
+					box, label + (permission.allowed ? u" — Allowed"_q : u" — Denied"_q), permission.allowed), st::boxRowPadding);
+				toggle->checkedChanges() | rpl::on_next([=](bool allowed) {
+					if (!MoeGram::Plugins::SetPluginPermission(plugin.id, permission.capability, allowed)) {
+						toggle->setDisabled(true);
+						line(u"Could not save permission. Check the client log."_q, true);
+					} else {
+						toggle->setText(label + (allowed ? u" — Allowed"_q : u" — Denied"_q));
+					}
+				}, toggle->lifetime());
+			}
+			if (!permissions.empty() && permissions.front().legacy) {
+				line(u"Legacy compatibility: existing MoeGram API access was allowed. You can revoke it here."_q);
+			}
+			line(u"Changes apply immediately. After allowing a previously denied API, reload the plugin if it needs to register hooks again."_q);
 			line(u"Network · Not sandboxed\nUnsafe/native · Not sandboxed"_q, true);
 			line(u"Python plugins run inside MoeGram and can access files, the network and native libraries directly."_q);
 			box->addButton(rpl::single(u"Close"_q), [=] { box->closeBox(); });
