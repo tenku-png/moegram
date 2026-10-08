@@ -15,6 +15,9 @@ def check():
     module._write_log = logs.append
     module._publish_composer = lambda plugin_id, config: configurations.append((plugin_id, config))
     sys.modules[module.__name__] = module
+    import _engine_test
+    _engine_test.install(module)
+    module._clear_composer = lambda plugin_id: configurations.append((plugin_id, None))
     exec(compile(source.read_text(), str(source), "exec"), module.__dict__)
     effects = module.ComposerEffects(insertion="pop", deletion="scatter")
     try:
@@ -55,7 +58,7 @@ def check():
         try:
             plugin.set_composer_effects(effects)
             raise AssertionError("unloaded plugin registered effects")
-        except RuntimeError:
+        except (RuntimeError, PermissionError):
             pass
         assert host.set_plugin_enabled("typing_fx", True)
         assert configurations[-1][1][1] is False
