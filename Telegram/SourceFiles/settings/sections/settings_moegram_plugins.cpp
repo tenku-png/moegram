@@ -249,6 +249,23 @@ private:
 
 };
 
+[[nodiscard]] bool Loadable(const MoeGram::Plugins::PluginInfo &plugin) {
+	using MoeGram::Plugins::PluginCompatibility;
+	return plugin.compatibility == PluginCompatibility::Compatible
+		|| plugin.compatibility == PluginCompatibility::Legacy;
+}
+
+[[nodiscard]] QString CompatibilityText(MoeGram::Plugins::PluginCompatibility value) {
+	using MoeGram::Plugins::PluginCompatibility;
+	switch (value) {
+	case PluginCompatibility::Compatible: return u"Compatible"_q;
+	case PluginCompatibility::Legacy: return u"Legacy"_q;
+	case PluginCompatibility::Incompatible: return u"Incompatible"_q;
+	case PluginCompatibility::Invalid: return u"Invalid"_q;
+	}
+	return QString();
+}
+
 class PluginCard final : public Ui::AbstractButton {
 public:
 	PluginCard(QWidget *parent, MoeGram::Plugins::PluginInfo plugin,
@@ -262,6 +279,10 @@ public:
 		_toggle = Ui::CreateChild<PluginToggle>(this, u"Enable %1"_q.arg(_plugin.name),
 			_plugin.desiredEnabled);
 		_toggle->setAccessibleName(u"Enable %1"_q.arg(_plugin.name));
+		if (!Loadable(_plugin)) {
+			_toggle->setDisabled(true);
+			_toggle->setToolTip(_plugin.error);
+		}
 		_toggle->checkedChanges() | rpl::on_next([=](bool checked) {
 			change(MoeGram::Plugins::PluginAction::Enable, checked);
 		}, lifetime());
@@ -419,6 +440,16 @@ private:
 			line(plugin.version + (plugin.author.isEmpty() ? QString() : u" · "_q + plugin.author));
 			if (!plugin.description.isEmpty()) line(plugin.description);
 			line(u"Plugin ID: %1"_q.arg(plugin.id));
+			line(u"API version: %1"_q.arg(plugin.apiVersion.isEmpty() ? u"1 (Legacy)"_q : plugin.apiVersion));
+			if (!plugin.engineRange.isEmpty()) {
+				line(u"Engine: %1"_q.arg(plugin.engineRange));
+			}
+			line(u"Status: %1"_q.arg(CompatibilityText(plugin.compatibility)), !Loadable(plugin));
+			if (!Loadable(plugin)) {
+				line(plugin.error, true);
+				box->addButton(rpl::single(u"Close"_q), [=] { box->closeBox(); });
+				return;
+			}
 			line(u"Declared capabilities\n%1"_q.arg(plugin.declared.isEmpty() ? u"Not declared"_q : plugin.declared));
 			line(u"Detected API references\n%1"_q.arg(plugin.detected.isEmpty() ? u"None detected"_q : plugin.detected));
 			const auto permissions = MoeGram::Plugins::PluginPermissions(plugin.id);
