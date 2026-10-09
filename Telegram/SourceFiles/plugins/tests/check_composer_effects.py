@@ -26,7 +26,8 @@ def check():
     except FrozenInstanceError:
         pass
     for kwargs in ({"speed": float("nan")}, {"speed": True}, {"speed": 0},
-                   {"style": "unknown"}, {"intensity": 3}, {"caret": "draw_python"}, {"edit": "unknown"}):
+                   {"style": "unknown"}, {"intensity": 3}, {"caret": "draw_python"}, {"edit": "unknown"},
+                   {"insertion": "blur"}, {"curve": "wobble"}):
         try:
             module.ComposerEffects(**kwargs)
             raise AssertionError(f"accepted {kwargs}")
@@ -40,9 +41,9 @@ def check():
         assert host.load(plugins) == 1
         assert host.plugins_snapshot()[0][1] == "Typing FX"
         plugin = host._loaded[0][2]
-        assert configurations[-1] == ("typing_fx", (True, True, True, True, True, 1., 1., "pop"))
+        assert configurations[-1] == ("typing_fx", (True, True, True, True, True, 1., 1., "pop", "pop", "auto"))
         host.settings_snapshot()
-        assert set(plugin._setting_types) == {"insert", "delete", "cursor", "send", "speed_choice", "intensity_choice", "style"}
+        assert set(plugin._setting_types) == {"insert", "delete", "cursor", "send", "speed_choice", "intensity_choice", "style", "motion", "curve"}
         host.update_setting("typing_fx", "delete", False)
         assert configurations[-1][1][1] is False
         host.update_setting("typing_fx", "speed_choice", 2)
@@ -53,6 +54,11 @@ def check():
             assert configurations[-1] == previous
         host.update_setting("typing_fx", "style", 2)
         assert configurations[-1][1][7] == "bouncy"
+        host.update_setting("typing_fx", "motion", 3)
+        host.update_setting("typing_fx", "curve", 6)
+        assert configurations[-1][1][8:] == ("spin", "bounce")
+        host.update_setting("typing_fx", "curve", 7)
+        assert configurations[-1][1][8:] == ("spin", "bounce")
         assert host.set_plugin_enabled("typing_fx", False)
         assert configurations[-1] == ("typing_fx", None)
         try:
@@ -67,7 +73,7 @@ def check():
         host.stop()
         assert configurations[-1] == ("typing_fx", None)
         assert host.load(plugins) == 1
-        assert configurations[-1][1][6:] == (1.6, "bouncy")
+        assert configurations[-1][1][6:8] == (1.6, "bouncy")
         host.stop()
         (plugins / "failed.py").write_text('''from base_plugin import BasePlugin
 from moegram.composer import ComposerEffects
