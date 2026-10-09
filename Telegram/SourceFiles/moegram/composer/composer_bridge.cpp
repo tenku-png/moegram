@@ -4,6 +4,20 @@
 #include "ui/widgets/fields/input_field.h"
 
 namespace MoeGram::Composer {
+namespace {
+
+::Ui::ComposerCurve Curve(const QString &name) {
+	using Curve = ::Ui::ComposerCurve;
+	return (name == u"smooth"_q) ? Curve::Smooth
+		: (name == u"linear"_q) ? Curve::Linear
+		: (name == u"cubic"_q) ? Curve::Cubic
+		: (name == u"back"_q) ? Curve::Back
+		: (name == u"elastic"_q) ? Curve::Elastic
+		: (name == u"bounce"_q) ? Curve::Bounce
+		: Curve::Auto;
+}
+
+} // namespace
 
 void SetPluginEffects(
 		QString id,
@@ -23,6 +37,14 @@ void SetPluginEffects(
 				: (value->style == u"soft"_q)
 				? ::Ui::ComposerEffectStyle::Soft
 				: ::Ui::ComposerEffectStyle::Pop,
+			.motion = (value->motion == u"drop"_q)
+				? ::Ui::ComposerMotion::Drop
+				: (value->motion == u"zoom"_q)
+				? ::Ui::ComposerMotion::Zoom
+				: (value->motion == u"spin"_q)
+				? ::Ui::ComposerMotion::Spin
+				: ::Ui::ComposerMotion::Pop,
+			.curve = Curve(value->curve),
 		};
 	}
 	::Ui::ComposerEffectsController::SetPlugin(std::move(id), config);

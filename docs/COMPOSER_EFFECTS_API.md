@@ -6,11 +6,17 @@ from moegram.composer import ComposerEffects
 self.set_composer_effects(ComposerEffects(
     insertion="pop", deletion="scatter", caret="smooth",
     send="fade_out", edit="soft", speed=1.0, intensity=1.0, style="bouncy",
+    curve="auto",
 ))
 ```
 
 `ComposerEffects` is an immutable value. Each effect defaults to `"none"`;
-only the named effect above or `"none"` is accepted. Speed must be finite and
+only the named effect above or `"none"` is accepted, except `insertion`,
+which also takes letter motions `"drop"` (falls from above), `"zoom"` (grows
+from zero) and `"spin"` (rotates in). `curve` picks the insertion easing:
+`"auto"` (follows `style`), `"smooth"`, `"linear"`, `"cubic"`, `"back"`,
+`"elastic"` or `"bounce"`; the curves follow `Easing.java` from
+text-animation by mihailkotovski (MIT). Speed must be finite and
 between 0.5 and 2.0; intensity between 0.25 and 2.0. Invalid configurations
 raise an exception before publication. `set_composer_effects(None)` removes
 the registration. Registration is allowed during load and while loaded.
@@ -21,7 +27,7 @@ C++ controller. If multiple plugins register effects, the lexicographically
 smallest plugin ID owns the complete configuration. Disabling/unloading a
 plugin removes its registration and clears transient state immediately.
 
-`plugins/typing_fx.py` is a normal plugin, named **Typing FX**. Its seven controls
+`plugins/typing_fx.py` is a normal plugin, named **Typing FX**. Its nine controls
 use the existing `ui.settings` implementation and per-plugin JSON storage.
 Edit entry follows its insert switch. Disabling the plugin restores standard
 input. The previous dev flag is no longer used.
