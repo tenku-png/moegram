@@ -2693,7 +2693,7 @@ void Widget::checkUpdateStatus() {
 		}
 		_updateTelegram.create(
 			this,
-			tr::ayu_UpdateAyuGram(tr::now),
+			u"Update MoeGram"_q,
 			st::dialogsUpdateButton,
 			st::dialogsInstallUpdate,
 			st::dialogsInstallUpdateOver,
