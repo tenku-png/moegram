@@ -38,7 +38,7 @@ using namespace Builder;
 
 namespace {
 
-void BuildLogo(SectionBuilder &builder) {
+[[maybe_unused]] void BuildLogo(SectionBuilder &builder) {
 	builder.add([](const WidgetContext &ctx) -> SectionBuilder::WidgetToAdd {
 		auto logo = object_ptr<Ui::RpWidget>(ctx.container);
 		const auto logoRaw = logo.data();
@@ -69,9 +69,19 @@ void BuildVersionInfo(SectionBuilder &builder) {
 		return {
 			.widget = object_ptr<Ui::FlatLabel>(
 				ctx.container,
-				rpl::single(
-					u"MoeGram Desktop v%1"_q.arg(QString::fromLatin1(AppVersionStr))),
+				rpl::single(u"About MoeGram"_q),
 				st::boxTitle),
+			.align = style::al_top,
+		};
+	});
+
+	builder.add([](const WidgetContext &ctx) -> SectionBuilder::WidgetToAdd {
+		return {
+			.widget = object_ptr<Ui::FlatLabel>(
+				ctx.container,
+				rpl::single(u"MoeGram Desktop v%1\nMoeGram is based on ayugram-desktop"_q
+					.arg(QString::fromLatin1(AppVersionStr))),
+				st::centeredBoxLabel),
 			.align = style::al_top,
 		};
 	});
@@ -136,7 +146,7 @@ void BuildLinks(SectionBuilder &builder) {
 	builder.addDivider();
 	builder.addSkip();
 
-	builder.addSubsectionTitle(tr::ayu_LinksHeader());
+	builder.addSubsectionTitle(rpl::single(u"Upstream credits"_q));
 
 	const auto controller = builder.controller();
 
@@ -192,7 +202,6 @@ const auto kMeta = BuildHelper({
 	.title = &tr::ayu_AyuPreferences,
 	.icon = &st::menuIconPremium,
 }, [](SectionBuilder &builder) {
-	BuildLogo(builder);
 	builder.addSkip();
 	BuildVersionInfo(builder);
 	BuildCategories(builder);
