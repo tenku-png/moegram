@@ -45,6 +45,7 @@ void SetPluginEffects(
 				? ::Ui::ComposerMotion::Spin
 				: ::Ui::ComposerMotion::Pop,
 			.curve = Curve(value->curve),
+			.dust = (value->shatter == u"dust"_q),
 		};
 	}
 	::Ui::ComposerEffectsController::SetPlugin(std::move(id), config);
