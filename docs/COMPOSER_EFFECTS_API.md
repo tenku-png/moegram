@@ -15,7 +15,8 @@ only the named effect above or `"none"` is accepted, except `insertion`,
 which also takes letter motions `"drop"` (falls from above), `"zoom"` (grows
 from zero) and `"spin"` (rotates in). `curve` picks the insertion easing:
 `"auto"` (follows `style`), `"smooth"`, `"linear"`, `"cubic"`, `"back"`,
-`"elastic"` or `"bounce"`; the curves follow `Easing.java` from
+`"elastic"` or `"bounce"`. `deletion` also takes `"dust"`: a removed
+letter breaks into falling dots (bounded pool of 160); the curves follow `Easing.java` from
 text-animation by mihailkotovski (MIT). Speed must be finite and
 between 0.5 and 2.0; intensity between 0.25 and 2.0. Invalid configurations
 raise an exception before publication. `set_composer_effects(None)` removes
@@ -27,7 +28,7 @@ C++ controller. If multiple plugins register effects, the lexicographically
 smallest plugin ID owns the complete configuration. Disabling/unloading a
 plugin removes its registration and clears transient state immediately.
 
-`plugins/typing_fx.py` is a normal plugin, named **Typing FX**. Its nine controls
+**Typing Effects** (in the separate moe-plugins repository) is a normal plugin. Its ten controls
 use the existing `ui.settings` implementation and per-plugin JSON storage.
 Edit entry follows its insert switch. Disabling the plugin restores standard
 input. The previous dev flag is no longer used.
@@ -49,7 +50,7 @@ rendering. No document text or formatting is changed for animation.
 `style` accepts `"soft"`, `"pop"` (default) or `"bouncy"`. Bouncy uses a native
 damped spring on insertion, stronger independent deletion particles and a lift
 with scale overshoot on send. Speed/intensity remain numeric renderer values;
-Typing FX exposes selectors and migrates existing numeric settings to the
+Typing Effects exposes selectors and migrates existing numeric settings to the
 nearest choice on its first load. Stagger is capped at 12 steps to keep pastes
 responsive. This API is a MoeGram extension, not an
 ExteraGram API compatibility claim.
