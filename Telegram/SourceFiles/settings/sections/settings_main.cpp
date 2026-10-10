@@ -392,7 +392,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 	const auto showOther = builder.showOther();
 
 	builder.addSectionButton({
-		.title = tr::ayu_AyuPreferences(),
+		.title = rpl::single(u"MoeGram"_q),
 		.targetSection = AyuMain::Id(),
 		.icon = { &st::menuIconPremium },
 		.keywords = { u"ayu"_q },
