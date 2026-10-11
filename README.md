@@ -35,6 +35,11 @@ There are no prebuilt packages yet. The Arch binary will not run on Debian,
 Ubuntu, Fedora and others because their system libraries differ. Build from
 source using the steps below.
 
+## Plugins
+
+Plugins are single Python files. See [docs/PLUGINS.md](docs/PLUGINS.md)
+for how to write one.
+
 ## Build
 
 ```sh
