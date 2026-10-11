@@ -37,9 +37,58 @@ AyuLanguage *AyuLanguage::instance = nullptr;
 
 AyuLanguage::AyuLanguage() = default;
 
+namespace {
+
+// Must match the key conversion in applyLanguageJson.
+QString NormalizeKey(const QString &brokenKey) {
+	auto key = qsl("ayu_") + brokenKey;
+	for (const auto &postfix : postfixes) {
+		if (key.endsWith(qsl("_") + postfix)) {
+			key = key.replace(qsl("_") + postfix, qsl("#") + postfix);
+			break;
+		}
+	}
+	if (key.endsWith("_PC")) {
+		key = key.replace("_PC", "");
+	}
+	return key;
+}
+
+void PurgeCachedLanguages(const QString &dir) {
+	QDir cache(dir);
+	if (!cache.exists()) {
+		return;
+	}
+	auto reset = false;
+	for (const auto &name : cache.entryList({ u"*.json"_q }, QDir::Files)) {
+		QFile file(cache.filePath(name));
+		if (!file.open(QIODevice::ReadOnly)) {
+			continue;
+		}
+		const auto doc = QJsonDocument::fromJson(file.readAll());
+		for (const auto &brokenKey : doc.object().keys()) {
+			if (brokenKey.endsWith("_Android")) {
+				continue;
+			}
+			Lang::GetInstance().resetValue(NormalizeKey(brokenKey).toUtf8());
+			reset = true;
+		}
+	}
+	cache.removeRecursively();
+	if (reset) {
+		Lang::GetInstance().updatePluralRules();
+		Local::writeLangPack();
+		LOG(("MoeGram: purged cached AyuGram translations."));
+	}
+}
+
+} // namespace
+
 void AyuLanguage::init() {
 	if (!instance) instance = new AyuLanguage;
-	instance->loadCachedLanguage();
+	// MoeGram: AyuGram's downloaded translations override MoeGram branding.
+	// Clear what earlier runs stored and use only the built-in strings.
+	PurgeCachedLanguages(instance->getCacheDir());
 }
 
 AyuLanguage *AyuLanguage::currentInstance() {
@@ -103,6 +152,9 @@ void AyuLanguage::saveCachedLanguage(const QByteArray &json, const QString &lang
 }
 
 void AyuLanguage::fetchLanguage(const QString &id, const QString &baseId) {
+	// MoeGram: AyuGram translations from the network are disabled.
+	return;
+
 	auto finalLangPackId = langMapping.contains(id) ? langMapping[id] : id;
 	_currentLangId = finalLangPackId.isEmpty() ? baseId : finalLangPackId;
 
