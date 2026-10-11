@@ -1,0 +1,28 @@
+# Maintainer: tenku-png
+pkgname=moegram-bin
+pkgver=1.0.0beta
+_tag=v1.0.0-beta
+pkgrel=1
+pkgdesc="Telegram Desktop client with a Python plugin engine, based on AyuGram"
+arch=('x86_64')
+url="https://github.com/tenku-png/moegram"
+license=('GPL-3.0-or-later')
+depends=(
+  'python>=3.14' 'python<3.15'
+  'qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-imageformats' 'qt6-wayland'
+  'abseil-cpp' 'ada' 'cairo' 'ffmpeg' 'fontconfig' 'glib2' 'hunspell'
+  'kcoreaddons' 'libavif' 'libfido2' 'libheif' 'libjpeg-turbo' 'libjxl'
+  'libpipewire' 'libsrtp' 'libvpx' 'libx11' 'libxcb' 'libxcomposite'
+  'libxdamage' 'libxext' 'libxfixes' 'libxkbcommon' 'libxrandr' 'libxtst'
+  'lz4' 'minizip' 'openal' 'openh264' 'openssl' 'opus' 'pango' 'rnnoise'
+  'xxhash' 'zlib'
+)
+provides=('moegram')
+conflicts=('moegram')
+options=('!strip' '!debug')
+source=("moegram-${_tag}-x86_64.tar.zst::${url}/releases/download/${_tag}/moegram-${_tag}-x86_64.tar.zst")
+sha256sums=('c75f4131d92be0a7ef2a6e4bc7a6a6b4164ccaadf1a599e8bb4b3ab9154b52be')
+
+package() {
+  cp -a "${srcdir}/usr" "${pkgdir}/"
+}
