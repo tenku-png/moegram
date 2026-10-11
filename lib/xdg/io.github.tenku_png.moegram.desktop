@@ -1,15 +1,15 @@
 [Desktop Entry]
-Name=MoeGram Desktop
-Comment=MoeGram — based on AyuGram Desktop and Telegram Desktop
-TryExec=AyuGram
-Exec=env DESKTOPINTEGRATION=1 AyuGram -- %U
-Icon=com.ayugram.desktop
+Name=moegram
+Comment=Telegram Desktop client with a Python plugin engine, based on AyuGram
+TryExec=moegram
+Exec=env DESKTOPINTEGRATION=1 moegram -- %U
+Icon=io.github.tenku_png.moegram
 Terminal=false
-StartupWMClass=AyuGram
+StartupWMClass=moegram
 Type=Application
 Categories=Chat;Network;InstantMessaging;Qt;
 MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;
-Keywords=tg;chat;im;messaging;messenger;sms;telegram;tdesktop;
+Keywords=moegram;tg;chat;im;messaging;messenger;sms;telegram;tdesktop;
 Actions=quit;
 DBusActivatable=true
 SingleMainWindow=true
@@ -17,6 +17,6 @@ X-GNOME-UsesNotifications=true
 X-GNOME-SingleWindow=true
 
 [Desktop Action quit]
-Exec=AyuGram -quit
-Name=Quit MoeGram
+Exec=moegram -quit
+Name=Quit moegram
 Icon=application-exit
