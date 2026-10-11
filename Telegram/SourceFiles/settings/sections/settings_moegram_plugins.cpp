@@ -1,6 +1,9 @@
 #include "settings/sections/settings_moegram_plugins.h"
 
 #include "plugins/plugin_host.h"
+#include "ayu/ui/boxes/plugin_info_box.h"
+#include "core/file_utilities.h"
+#include "settings.h"
 #include "ui/boxes/single_choice_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
@@ -12,8 +15,10 @@
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "window/window_session_controller.h"
+#include "mainwindow.h"
 
 #include "ui/painter.h"
+#include "ui/empty_userpic.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
@@ -23,10 +28,18 @@
 #include "styles/style_settings_moegram_plugins.h"
 #include "styles/style_widgets.h"
 
+#include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QPointer>
+#include <QtGui/QDesktopServices>
 
 namespace Settings {
 namespace {
+
+rpl::event_stream<> &PluginsInstalled() {
+	static auto result = rpl::event_stream<>();
+	return result;
+}
 
 void RenderSettings(
 	not_null<Ui::VerticalLayout*> content,
@@ -76,17 +89,19 @@ void AddText(
 		not_null<Ui::VerticalLayout*> content,
 		const QString &text,
 		const QString &subtext = QString()) {
-	content->add(object_ptr<Ui::FlatLabel>(
-		content,
-		text,
-		st::defaultFlatLabel),
-		st::defaultSubsectionTitlePadding,
-		style::al_justify);
+	if (!text.isEmpty()) {
+		content->add(object_ptr<Ui::FlatLabel>(
+			content,
+			text,
+			st::defaultFlatLabel),
+			st::defaultSubsectionTitlePadding,
+			style::al_justify);
+	}
 	if (!subtext.isEmpty()) {
 		content->add(object_ptr<Ui::FlatLabel>(
 			content,
 			subtext,
-			st::defaultFlatLabel),
+			st::boxDividerLabel),
 			st::defaultSubsectionTitlePadding,
 			style::al_justify);
 	}
@@ -136,8 +151,16 @@ void AddSettingRows(
 				style::al_justify);
 			const auto pluginId = page.id;
 			const auto key = item.key;
-			field->changes() | rpl::on_next([=] {
+			const auto saved = std::make_shared<QString>(item.value);
+			rpl::merge(
+				field->submits() | rpl::to_empty,
+				field->focusedChanges() | rpl::filter(!rpl::mappers::_1) | rpl::to_empty
+			) | rpl::on_next([=] {
 				const auto value = field->getLastText();
+				if (value == *saved) {
+					return;
+				}
+				*saved = value;
 				(void)MoeGram::Plugins::UpdatePluginSetting(
 					pluginId,
 					key,
@@ -147,7 +170,7 @@ void AddSettingRows(
 					});
 			}, field->lifetime());
 			if (!item.subtext.isEmpty()) {
-				AddText(content, item.subtext);
+				AddText(content, QString(), item.subtext);
 			}
 		} break;
 		case MoeGram::Plugins::SettingKind::Switch: {
@@ -168,7 +191,7 @@ void AddSettingRows(
 					});
 			}, button->lifetime());
 			if (!item.subtext.isEmpty()) {
-				AddText(content, item.subtext);
+				AddText(content, QString(), item.subtext);
 			}
 		} break;
 		case MoeGram::Plugins::SettingKind::Selector: {
@@ -270,9 +293,11 @@ class PluginCard final : public Ui::AbstractButton {
 public:
 	PluginCard(QWidget *parent, MoeGram::Plugins::PluginInfo plugin,
 			Fn<void(MoeGram::Plugins::PluginAction, bool)> change,
-			Fn<void()> info, Fn<void()> settings, Fn<void()> remove)
+			Fn<void()> info, Fn<void()> settings, Fn<void()> remove,
+			bool separator)
 	: Ui::AbstractButton(parent)
-	, _plugin(std::move(plugin)) {
+	, _plugin(std::move(plugin))
+	, _separator(separator) {
 		setClickedCallback(info);
 		setAccessibleName(_plugin.name);
 		setFocusPolicy(Qt::StrongFocus);
@@ -300,9 +325,7 @@ public:
 			_plugin.pinned ? u"Unpin"_q : u"Pin"_q,
 			[=] { change(MoeGram::Plugins::PluginAction::Pin, !_plugin.pinned); });
 		action(st::menuIconInfo, u"Permissions and details"_q, info);
-		const auto settingsButton = action(st::menuIconSettings, u"Settings"_q, settings);
-		settingsButton->setDisabled(!_plugin.enabled);
-		if (!_plugin.enabled) settingsButton->setToolTip(u"Enable the plugin to open settings"_q);
+		action(st::menuIconSettings, u"Settings"_q, settings);
 		action(st::menuIconDeleteAttention, u"Remove plugin"_q, remove);
 	}
 
@@ -323,20 +346,23 @@ protected:
 		p.fillRect(rect(), isOver() ? st::windowBgOver : st::windowBg);
 		const auto padding = st::pluginManagerPadding;
 		const auto size = st::pluginCardIconSize;
-		p.setRenderHint(QPainter::Antialiasing);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgActive);
-		p.drawEllipse(QRect(padding, st::pluginCardTitleTop, size, size));
-		p.setFont(st::semiboldFont);
-		p.setPen(st::windowFgActive);
-		p.drawText(QRect(padding, st::pluginCardTitleTop, size, size),
-			Qt::AlignCenter, (_plugin.name.front().isLetterOrNumber()
-				? _plugin.name.left(1) : _plugin.id.left(1)).toUpper());
 		const auto left = padding + size + st::pluginManagerGap;
+		if (_separator) {
+			p.fillRect(left, 0, width() - left, st::lineWidth, st::shadowFg);
+		}
+		const auto letterSource = (!_plugin.name.isEmpty()
+			&& _plugin.name.front().isLetterOrNumber())
+			? _plugin.name
+			: _plugin.id;
+		Ui::EmptyUserpic(
+			Ui::EmptyUserpic::UserpicColor(
+				Ui::EmptyUserpic::ColorIndex(qHash(_plugin.id))),
+			letterSource).paintCircle(
+				p, padding, st::pluginCardTitleTop, width(), size);
 		const auto available = width() - left - padding;
-		const auto text = [&](int top, QString value, bool secondary, int reserve = 0) {
+		const auto text = [&](int top, QString value, bool secondary, int reserve = 0, bool attention = false) {
 			p.setFont(secondary ? st::normalFont : st::semiboldFont);
-			p.setPen(secondary ? st::windowSubTextFg : st::windowFg);
+			p.setPen(attention ? st::attentionButtonFg : secondary ? st::windowSubTextFg : st::windowFg);
 			p.drawText(left, top + p.fontMetrics().ascent(),
 				p.fontMetrics().elidedText(value, Qt::ElideRight, std::max(0, available - reserve)));
 		};
@@ -344,11 +370,10 @@ protected:
 		text(st::pluginCardMetaTop, _plugin.version
 			+ (_plugin.author.isEmpty() ? QString() : u" · "_q + _plugin.author), true);
 		text(st::pluginCardDescriptionTop, !_plugin.error.isEmpty() ? _plugin.error
-			: _plugin.description.isEmpty() ? u"No description provided"_q : _plugin.description, true);
+			: _plugin.description.isEmpty() ? u"No description"_q : _plugin.description,
+			true, 0, !_plugin.error.isEmpty());
 		if (hasFocus()) {
-			p.setPen(st::windowActiveTextFg);
-			p.setBrush(Qt::NoBrush);
-			p.drawRect(rect().adjusted(0, 0, -st::lineWidth, -st::lineWidth));
+			p.fillRect(0, 0, st::lineWidth * 2, height(), st::windowActiveTextFg);
 		}
 	}
 
@@ -356,8 +381,15 @@ private:
 	MoeGram::Plugins::PluginInfo _plugin;
 	Ui::Checkbox *_toggle = nullptr;
 	std::vector<Ui::IconButton*> _actions;
+	bool _separator = false;
 
 };
+
+void OpenPluginsFolder() {
+	const auto path = MoeGramPluginsPath();
+	QDir().mkpath(path);
+	QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
 
 class PluginManager final : public Ui::RpWidget {
 public:
@@ -365,8 +397,20 @@ public:
 	: Ui::RpWidget(parent)
 	, _section(section) {
 		_layout = Ui::CreateChild<Ui::VerticalLayout>(this);
-		_global = AddButtonWithIcon(_layout, rpl::single(u"Enable Plugins"_q), st::settingsButtonNoIcon);
+		_global = AddButtonWithIcon(_layout, rpl::single(u"Enable plugins"_q), st::settingsButtonNoIcon);
 		_global->toggleOn(_enabled.value());
+		AddButtonWithIcon(_layout, rpl::single(u"Add plugin"_q), st::settingsButton,
+			{ &st::menuIconAdd })->setClickedCallback([=] {
+			ChooseMoeGramPlugin(controller());
+		});
+		AddButtonWithIcon(_layout, rpl::single(u"Open plugins folder"_q), st::settingsButton,
+			{ &st::menuIconShowInFolder })->setClickedCallback([=] {
+			OpenPluginsFolder();
+		});
+		Ui::AddSkip(_layout);
+		PluginsInstalled().events() | rpl::on_next([=] {
+			refresh();
+		}, lifetime());
 		_global->toggledChanges() | rpl::on_next([=](bool enabled) {
 			if (!_refreshing) change(QString(), MoeGram::Plugins::PluginAction::Global, enabled);
 		}, lifetime());
@@ -385,6 +429,9 @@ public:
 		}, lifetime());
 		_list = _layout->add(object_ptr<Ui::VerticalLayout>(_layout));
 		AddText(_list, u"Loading plugins…"_q);
+		_refreshing = true;
+		_enabled = MoeGram::Plugins::PluginsEnabled();
+		_refreshing = false;
 		Ui::ResizeFitChild(this, _layout);
 		refresh();
 	}
@@ -396,7 +443,7 @@ private:
 			if (weak) weak->accept(std::move(plugins));
 		})) {
 			_list->clear();
-			AddText(_list, u"Plugin Host is unavailable."_q);
+			AddText(_list, u"Plugins can't start right now. Try restarting MoeGram."_q);
 		}
 	}
 
@@ -418,11 +465,11 @@ private:
 				[weak](bool success, auto plugins) {
 					if (!weak) return;
 					weak->accept(std::move(plugins));
-					if (!success) weak->controller()->showToast(u"Could not update plugin. Check the client log."_q);
+					if (!success) weak->controller()->showToast(u"Couldn't update the plugin. Details are in the log."_q);
 				})) {
 			_global->setToggleLocked(false);
 			_list->setEnabled(true);
-			controller()->showToast(u"Plugin Host is busy. Try again."_q);
+			controller()->showToast(u"Plugins are busy, try again in a moment."_q);
 			refresh();
 		}
 	}
@@ -496,6 +543,11 @@ private:
 
 	void render() {
 		_list->clear();
+		if (!_enabled.current()) {
+			AddText(_list, u"Plugins are off."_q);
+			_list->resizeToWidth(width());
+			return;
+		}
 		auto sorted = _plugins;
 		std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
 			if (a.pinned != b.pinned) return a.pinned;
@@ -505,17 +557,29 @@ private:
 		const auto query = _search->getLastText().trimmed();
 		auto count = 0;
 		for (const auto &plugin : sorted) {
-			if (_filter == 1 && !plugin.enabled) continue;
+			if (_filter == 1 && !plugin.desiredEnabled) continue;
 			if (!(plugin.name + u" "_q + plugin.id + u" "_q + plugin.author + u" "_q
 				+ plugin.description).contains(query, Qt::CaseInsensitive)) continue;
-			if (count++) Ui::AddDivider(_list);
+			const auto separator = (count++ > 0);
 			_list->add(object_ptr<PluginCard>(_list, plugin,
 				[=](MoeGram::Plugins::PluginAction action, bool value) { change(plugin.id, action, value); },
 				[=] { details(plugin); },
-				[=] { _section->showOther(std::make_shared<PluginPageFactory>(plugin.id, plugin.name)); },
-				[=] { remove(plugin); }));
+				[=] {
+					if (!plugin.enabled) {
+						controller()->showToast(u"Turn the plugin on to open its settings."_q);
+						return;
+					}
+					_section->showOther(std::make_shared<PluginPageFactory>(plugin.id, plugin.name));
+				},
+				[=] { remove(plugin); },
+				separator));
 		}
-		if (!count) AddText(_list, _plugins.empty() ? u"No plugins installed."_q : u"No matching plugins."_q);
+		if (!count) {
+			AddText(_list, _plugins.empty()
+				? u"No plugins yet. Tap \"Add plugin\" or drop .py files into the plugins folder."_q
+				: u"Nothing found."_q);
+		}
+		_list->resizeToWidth(width());
 	}
 
 	not_null<AbstractSection*> _section;
@@ -603,6 +667,85 @@ void MoeGramPlugins::setupContent() {
 
 Type MoeGramPluginsId() {
 	return MoeGramPlugins::Id();
+}
+
+QString MoeGramPluginsPath() {
+	return cWorkingDir() + u"plugins/"_q;
+}
+
+void InstallMoeGramPlugin(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const QString &id,
+		bool enable) {
+	const auto directory = MoeGramPluginsPath();
+	const auto fileName = id + u".py"_q;
+	const auto target = directory + fileName;
+	const auto temporary = target + u".part"_q;
+	const auto weak = base::make_weak(controller);
+	const auto copied = [&] {
+		if (!QDir().mkpath(directory)) {
+			return false;
+		}
+		QFile::remove(temporary);
+		if (QFileInfo(path).absoluteFilePath()
+				== QFileInfo(target).absoluteFilePath()) {
+			return true;
+		}
+		if (!QFile::copy(path, temporary)) {
+			return false;
+		}
+		QFile::remove(target);
+		return QFile::rename(temporary, target);
+	}();
+	if (!copied) {
+		QFile::remove(temporary);
+		controller->showToast(u"Couldn't copy the plugin file."_q);
+		return;
+	}
+	const auto started = MoeGram::Plugins::ManagePlugin(
+		fileName,
+		enable,
+		MoeGram::Plugins::PluginAction::Install,
+		[=](bool success, auto) {
+			PluginsInstalled().fire({});
+			if (const auto strong = weak.get()) {
+				strong->showToast(!success
+					? u"Plugin added, but it couldn't load. Details are in the log."_q
+					: enable
+					? u"Plugin added and turned on."_q
+					: u"Plugin added."_q);
+			}
+		});
+	if (!started) {
+		controller->showToast(
+			u"Plugin added. It will show up after restart."_q);
+	}
+}
+
+void ChooseMoeGramPlugin(not_null<Window::SessionController*> controller) {
+	const auto weak = base::make_weak(controller);
+	FileDialog::GetOpenPath(
+		controller->widget().get(),
+		u"Add plugin"_q,
+		u"Plugins (*.py *.plugin)"_q,
+		[=](const FileDialog::OpenResult &result) {
+			const auto strong = weak.get();
+			if (!strong || result.paths.isEmpty()) {
+				return;
+			}
+			const auto path = result.paths.front();
+			auto file = QFile(path);
+			auto metadata = file.open(QIODevice::ReadOnly)
+				? Ui::ParsePluginMetadata(file.read(4 * 1024 * 1024))
+				: Ui::PluginMetadata();
+			if (metadata.id.isEmpty()) {
+				strong->showToast(
+					u"This file doesn't look like a plugin: __id__ and __name__ are missing."_q);
+				return;
+			}
+			Ui::ShowPluginInfoBox(strong, path, std::move(metadata));
+		});
 }
 
 } // namespace Settings
