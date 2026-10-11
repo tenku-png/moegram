@@ -5,6 +5,8 @@
 //
 // Copyright @Radolyn, 2026
 #include "ayu/ui/boxes/plugin_info_box.h"
+#include "settings/sections/settings_moegram_plugins.h"
+#include "ui/widgets/checkbox.h"
 
 #include "apiwrap.h"
 #include "ayu/ayu_url_handlers.h"
@@ -415,18 +417,24 @@ void FillPluginInfoBox(
 
 	Ui::AddSkip(box->verticalLayout());
 
-	box->verticalLayout()->add(
-		object_ptr<Ui::FlatLabel>(
+	const auto enableNow = box->verticalLayout()->add(
+		object_ptr<Ui::Checkbox>(
 			box->verticalLayout(),
-			tr::ayu_PluginsNotAvailable(),
-			st::boxDividerLabel),
+			u"Turn on right away"_q,
+			true,
+			st::defaultBoxCheckbox),
 		st::boxRowPadding);
 
 	Ui::AddSkip(box->verticalLayout());
 
+	const auto id = metadata.id;
 	const auto closeButton = box->addButton(
-		tr::lng_close(),
-		[=] { box->closeBox(); });
+		rpl::single(u"Add plugin"_q),
+		[=] {
+			const auto enable = enableNow->checked();
+			box->closeBox();
+			Settings::InstallMoeGramPlugin(controller, pluginPath, id, enable);
+		});
 	const auto buttonWidth = box->width()
 		- rect::m::sum::h(st::starrefFooterBox.buttonPadding);
 	closeButton->widthValue() | rpl::filter([=]
