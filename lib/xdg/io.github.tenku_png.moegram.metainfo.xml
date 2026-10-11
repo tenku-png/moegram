@@ -1,25 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <component type="desktop">
-    <id>com.ayugram.desktop</id>
+    <id>io.github.tenku_png.moegram</id>
     <metadata_license>CC0-1.0</metadata_license>
     <project_license>GPL-3.0</project_license>
-    <name>MoeGram Desktop</name>
-    <summary>MoeGram — based on AyuGram Desktop and Telegram Desktop</summary>
+    <name>moegram</name>
+    <summary>Telegram Desktop client with a Python plugin engine, based on AyuGram</summary>
     <description>
-        <p>Native Telegram Desktop client with a Python plugin foundation, based on AyuGram Desktop and Telegram Desktop.</p>
+        <p>Native Telegram Desktop client with a Python plugin engine. Based on AyuGram Desktop and Telegram Desktop.</p>
     </description>
     <categories>
         <category>Network</category>
         <category>InstantMessaging</category>
     </categories>
-    <update_contact>helpdesk_at_radolyn.com</update_contact>
-    <developer_name>Radolyn Labs</developer_name>
-    <url type="homepage">https://ayugram.one/</url>
-    <url type="faq">https://t.me/AyuGramFAQ</url>
-    <url type="bugtracker">https://t.me/ayugramchat/1262</url>
-    <url type="translate">https://crowdin.com/project/ayugram</url>
-    <url type="vcs-browser">https://github.com/AyuGram/AyuGramDesktop</url>
-    <url type="contribute">https://github.com/AyuGram/AyuGramDesktop/blob/dev/.github/CONTRIBUTING.md</url>
+        <developer_name>tenku-png</developer_name>
+    <url type="homepage">https://github.com/tenku-png/moegram</url>
+    <url type="bugtracker">https://github.com/tenku-png/moegram/issues</url>
+    <url type="vcs-browser">https://github.com/tenku-png/moegram</url>
     <screenshots>
       <screenshot type="default">
         <image>https://raw.githubusercontent.com/telegramdesktop/tdesktop/dev/docs/assets/preview.png</image>
@@ -34,7 +30,7 @@
         <keyword>chat</keyword>
         <keyword>sms</keyword>
         <keyword>im</keyword>
-        <keyword>ayugram</keyword>
+        <keyword>moegram</keyword>
     </keywords>
     <requires>
         <display_length compare="ge">medium</display_length>
@@ -75,8 +71,8 @@
         <content_attribute id="money-gambling">none</content_attribute>
         <content_attribute id="money-advertising">moderate</content_attribute>
     </content_rating>
-    <launchable type="desktop-id">com.ayugram.desktop.desktop</launchable>
+    <launchable type="desktop-id">io.github.tenku_png.moegram.desktop</launchable>
     <provides>
-        <binary>AyuGram</binary>
+        <binary>moegram</binary>
     </provides>
 </component>

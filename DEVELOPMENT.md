@@ -124,7 +124,7 @@ cmake --install out/arch-debug
 ```bash
 mkdir -p out/plugin-poc/plugins
 cp plugins/hello_world.py out/plugin-poc/plugins/
-out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -noupdate
+out/arch-debug/bin/moegram -workdir "$PWD/out/plugin-poc" -noupdate
 ```
 
 При старте host создаёт каталог, находит обычные `*.py` файлы в нём (без рекурсии, symlink и имён с `_`) и загружает их в порядке имён файлов. Файлы автоматически включены: менеджера включения пока нет. Нельзя класть туда недоверенные скрипты. Host использует isolated configuration CPython: игнорирует `PYTHONPATH`/`PYTHONHOME`, user site и импорт `site`, не добавляет рабочий каталог или каталог плагинов в `sys.path`, не устанавливает обработчики сигналов Python и не пишет `.pyc`. Изолированная конфигурация управляет окружением интерпретатора и **не является security sandbox**.
@@ -150,7 +150,7 @@ out/arch-debug/Telegram/SourceFiles/plugins/moegram_plugin_smoke "$PWD/plugins"
 Первый запуск проверяет ошибки импорта, конструктора, load/unload, синтаксиса, `SystemExit`, отклонение metadata/duplicate ID до исполнения, продолжение загрузки/выгрузки, защиту от второго владельца CPython и повторный запуск после остановки. Второй загружает настоящий `hello_world.py` через тот же C++ embedded host. Для проверки в клиенте временно добавьте `raise RuntimeError("intentional PoC exception")` после logging в копию `out/plugin-poc/plugins/hello_world.py` и перезапустите клиент. В `out/plugin-poc/log.txt` должны появиться traceback и cleanup unload, а клиент продолжит работать. Закройте тестовый экземпляр штатно:
 
 ```bash
-out/arch-debug/bin/AyuGram -workdir "$PWD/out/plugin-poc" -quit
+out/arch-debug/bin/moegram -workdir "$PWD/out/plugin-poc" -quit
 ```
 
 Ошибка Python проверяет обработку исключений, а не устойчивость к native crash. Тестовые аккаунты, логи, бинарники и временные плагины остаются под игнорируемым `out/`.
