@@ -10,7 +10,7 @@ CPython plugin engine. Builds and day-to-day work happen on Arch Linux.
 - `Telegram/SourceFiles/settings/sections/settings_moegram_plugins.*` — Plugins tab.
 - `Telegram/ThirdParty/moegram-plugin-engine/` — the engine (separate repo, submodule).
 - `plugins/` — example plugins.
-- `docs/` — plugin API notes.
+- `docs/PLUGINS.md` — plugin author guide.
 - `packaging/` — release packaging (`moegram-bin` PKGBUILD).
 
 ## Remotes
