@@ -27,6 +27,15 @@ if (APPLE)
     enable_language(OBJC OBJCXX)
 endif()
 
+# WHY: release binaries must not carry build machine paths from __FILE__ or debug info.
+if (NOT MSVC)
+    set(release_configs "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
+    if (DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "/")
+        add_compile_options("$<${release_configs}:-ffile-prefix-map=$ENV{HOME}=~>")
+    endif()
+    add_compile_options("$<${release_configs}:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.>")
+endif()
+
 if (configuration_types_init
     AND CMAKE_CONFIGURATION_TYPES
     AND NOT MinSizeRel IN_LIST CMAKE_CONFIGURATION_TYPES)
