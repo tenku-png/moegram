@@ -1,3 +1,15 @@
+1.1.0 (12.10.26)
+
+- Send a video as a round video message: right click Send in the file box.
+
+New for plugins (engine 0.11.0):
+- Falling particles: snow, sakura, matrix, rain, leaves.
+- Slider and color picker in plugin settings.
+- Window focus and opened chat events, current_chat_id().
+- Animated GIF/WebP overlays, draggable overlays, update_overlay().
+- Media: get_media(), send_photo(), send_file(), send_video_note(),
+  reply_to in the send hook. New permission messages.send_media.
+
 1.0.1 (12.10.26)
 
 New for plugins:
