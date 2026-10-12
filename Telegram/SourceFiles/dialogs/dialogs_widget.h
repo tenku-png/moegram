@@ -34,6 +34,10 @@ namespace Main {
 class Session;
 } // namespace Main
 
+namespace MoeGram::Ui {
+class PluginPills;
+} // namespace MoeGram::Ui
+
 namespace HistoryView {
 class TopBarWidget;
 class ContactStatus;
@@ -256,6 +260,7 @@ private:
 	void updateStoriesTitleShown();
 	void updateJumpToDateVisibility(bool fast = false);
 	void updateSearchFromVisibility(bool fast = false);
+	void updateSearchMargins();
 	void updateControlsGeometry();
 	void refreshTopBars();
 	void showSearchInTopBar(anim::type animated);
@@ -343,6 +348,7 @@ private:
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
+	object_ptr<MoeGram::Ui::PluginPills> _pluginPills;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;
 
 	std::unique_ptr<Ui::MoreChatsBar> _moreChatsBar;

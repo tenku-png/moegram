@@ -16,6 +16,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_report.h"
 #include "dialogs/dialogs_key.h"
 
+namespace MoeGram::Ui {
+class ChatHeaderDecor;
+} // namespace MoeGram::Ui
+
 namespace style {
 struct UserpicButton;
 } // namespace style
@@ -275,6 +279,7 @@ private:
 	bool _titlePeerTextOnline = false;
 	int _leftTaken = 0;
 	int _rightTaken = 0;
+	object_ptr<MoeGram::Ui::ChatHeaderDecor> _pluginDecor;
 	float64 _titleShownRatio = 1.;
 	bool _animatingMode = false;
 	std::unique_ptr<Ui::InfiniteRadialAnimation> _connecting;

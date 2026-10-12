@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 
 #include "history/history.h"
+#include "moegram/ui/plugin_blur.h"
+#include "moegram/ui/plugin_header.h"
 #include "history/view/history_view_send_action.h"
 #include "boxes/add_contact_box.h"
 #include "ui/boxes/confirm_box.h"
@@ -141,8 +143,15 @@ TopBarWidget::TopBarWidget(
 , _recentActions(this, st::topBarRecentActions)
 , _admins(this, st::topBarAdmins)
 , _titlePeerText(st::windowMinWidth / 3)
+, _pluginDecor(this)
 , _onlineUpdater([=] { updateOnlineDisplay(); }) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
+
+	_pluginDecor->changes() | rpl::on_next([=] {
+		updateControlsVisibility();
+		updateControlsGeometry();
+		update();
+	}, lifetime());
 
 	_clear->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	_forward->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
@@ -559,7 +568,13 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 		: -st::topBarHeight;
 	const auto slidingTop = std::max(selectedButtonsTop, searchFieldTop);
 
-	p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
+	const auto bar = QRect(0, 0, width(), st::topBarHeight);
+	if (!MoeGram::Ui::PaintEdgeBlur(this, u"chat_header"_q, p, bar, st::topBarBg)) {
+		p.fillRect(bar, st::topBarBg);
+	}
+	if (const auto tint = _pluginDecor->background()) {
+		p.fillRect(QRect(0, 0, width(), st::topBarHeight), *tint);
+	}
 	if (slidingTop < 0) {
 		p.translate(0, slidingTop + st::topBarHeight);
 		paintTopBar(p);
@@ -834,6 +849,17 @@ void TopBarWidget::paintStatus(
 	if (section == Section::Replies || section == Section::SavedSublist) {
 		p.setPen(st::historyStatusFg);
 		p.drawTextLeft(left, top, outerWidth, _customTitleText);
+	} else if (!_pluginDecor->subtitle().isEmpty()
+			&& section == Section::History) {
+		p.setPen(st::historyStatusFg);
+		p.setFont(st::dialogsTextFont);
+		p.drawTextLeft(
+			left,
+			top,
+			outerWidth,
+			st::dialogsTextFont->elided(
+				_pluginDecor->subtitle(),
+				availableWidth));
 	} else {
 		p.setPen(_titlePeerTextOnline
 			? st::historyStatusFgActive
@@ -1343,6 +1369,11 @@ void TopBarWidget::updateControlsGeometry() {
 		_rightTaken += _search->width() + st::topBarCallSkip;
 	}
 
+	_pluginDecor->moveToRight(_rightTaken, otherButtonsTop);
+	if (!_pluginDecor->isHidden()) {
+		_rightTaken += _pluginDecor->width();
+	}
+
 	updateMembersShowArea();
 }
 
@@ -1395,6 +1426,10 @@ void TopBarWidget::updateControlsVisibility() {
 	const auto topic = _activeChat.key.topic();
 	const auto section = _activeChat.section;
 	const auto historyMode = (section == Section::History);
+	_pluginDecor->setVisible(historyMode
+		&& !visible
+		&& !_searchMode
+		&& _pluginDecor->width() > 0);
 	const auto hasPollsMenu = (_activeChat.key.peer()
 		&& _activeChat.key.peer()->canCreatePolls())
 		|| (topic && Data::CanSend(topic, ChatRestriction::SendPolls));

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 
+#include "moegram/ui/plugin_menus.h"
 #include "base/call_delayed.h"
 #include "menu/menu_check_item.h"
 #include "menu/menu_mark_as_read.h"
@@ -1718,6 +1719,15 @@ void Filler::fill() {
 	case Section::SubsectionTabsMenu: fillContextMenuActions(); break;
 	case Section::SavedSublist: fillMonoforumPeerActions(); break;
 	default: Unexpected("_request.section in Filler::fill.");
+	}
+	if (_peer
+		&& !_folder
+		&& (_request.section == Section::ChatsList
+			|| _request.section == Section::History
+			|| _request.section == Section::ContextMenu)) {
+		MoeGram::Ui::AddChatMenuItems([&](const QString &text, Fn<void()> callback) {
+			_addAction(text, std::move(callback), &st::menuIconCustomize);
+		}, _peer);
 	}
 }
 
