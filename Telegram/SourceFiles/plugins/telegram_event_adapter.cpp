@@ -17,6 +17,15 @@ qint64 DialogId(PeerId peer) {
 	return qint64(peerToUser(peer).bare);
 }
 
+PeerId PeerFromDialogId(qint64 id) {
+	if (id <= -1000000000000LL) {
+		return peerFromChannel(ChannelId(BareId(-(id + 1000000000000LL))));
+	} else if (id < 0) {
+		return peerFromChat(ChatId(BareId(-id)));
+	}
+	return peerFromUser(UserId(BareId(id)));
+}
+
 bool ObserveTelegramUpdate(
 		not_null<Main::Session*> session,
 		const MTPUpdate &update) {

@@ -15,6 +15,7 @@ class Session;
 namespace MoeGram::Plugins {
 
 [[nodiscard]] qint64 DialogId(PeerId peer);
+[[nodiscard]] PeerId PeerFromDialogId(qint64 id);
 [[nodiscard]] bool ObserveTelegramUpdate(
 	not_null<Main::Session*> session,
 	const MTPUpdate &update);

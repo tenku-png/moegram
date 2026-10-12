@@ -15,6 +15,8 @@ target_sources(Telegram PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/outgoing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/outgoing_context.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/events.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/media.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/media.h
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/events.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/message_menu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/message_menu.h

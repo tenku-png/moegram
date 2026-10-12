@@ -6,6 +6,7 @@
 #include "main/main_session.h"
 #include "plugins/plugin_host.h"
 #include "plugins/telegram_event_adapter.h"
+#include "moegram/bridge/media.h"
 #include "moegram/composer/composer_bridge.h"
 #include "moegram/ui/plugin_pills.h"
 #include "moegram/ui/plugin_ui.h"
@@ -24,6 +25,7 @@ ApplicationRuntime::ApplicationRuntime(Core::Application *application) {
 		}, Composer::SetPluginEffects);
 	_host->setPillCallback(MoeGram::Ui::SetPluginPill);
 	_host->setUiCallback(MoeGram::Ui::SetPluginUi);
+	_host->setMediaCallback(HandlePluginMedia);
 	(void)_host->start(cWorkingDir() + u"plugins/"_q);
 	application->appDeactivatedValue(
 	) | rpl::distinct_until_changed(
