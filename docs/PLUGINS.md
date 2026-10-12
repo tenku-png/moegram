@@ -1,7 +1,7 @@
 # Writing moegram plugins
 
 How to write a plugin for moegram. This covers what the engine supports
-today: engine 0.10.0, plugin API 1, SDK 0.9.0.
+today: engine 0.11.0, plugin API 1, SDK 0.9.0.
 
 If something is not listed here, it is not supported. Don't guess APIs from
 ExteraGram (Android) docs: only the subset below exists on desktop.
@@ -62,7 +62,7 @@ it**, so the rules are strict:
 | `__author__` | no | Shown under the name. |
 | `__description__` | no | Shown on the plugin card and in the install box. |
 | `__moegram_api_version__` | no | `"1"`. Marks a native moegram plugin. Without it the plugin is treated as legacy API 1 (fine). Any other value → plugin is not loaded. |
-| `__moegram_engine__` | no | Engine version range, e.g. `">=0.10,<1"`. Plugin is not loaded if the engine doesn't match. |
+| `__moegram_engine__` | no | Engine version range, e.g. `">=0.11,<1"`. Plugin is not loaded if the engine doesn't match. |
 | `__capabilities__` | no | Permissions the plugin needs, see below. |
 | `__icon__`, `__app_version__`, `__sdk_version__` | no | ExteraGram fields. Accepted, never enforced. |
 
@@ -70,12 +70,13 @@ it**, so the rules are strict:
 
 | Capability | Allows |
 | --- | --- |
-| `messages.read` | Receiving messages, edits, deletes, updates, request hooks, outgoing message hook |
+| `messages.read` | Receiving messages, edits, deletes, updates, request hooks, outgoing message hook, `on_chat_opened`, `current_chat_id()`, `get_media()` |
 | `messages.send` | Replacing the text of an outgoing message (needs `messages.modify` too) |
 | `messages.modify` | Cancelling/replacing outgoing messages, cancelling/modifying requests |
-| `ui` | Menu items, toasts, settings page, composer effects, pill, timers, palette, chat header, blur, effects |
+| `ui` | Menu items, toasts, settings page, composer effects, pill, timers, palette, chat header, blur, effects, `on_app_active` / `on_app_inactive` |
 | `ui.advanced` | `self.ui.find()`: changing named parts of the window |
 | `storage` | `get_setting` / `set_setting` |
+| `messages.send_media` | `send_photo`, `send_file`, `send_video_note` |
 
 Two modes:
 
@@ -154,8 +155,8 @@ ExteraGram-style aliases also work: `message.id`, `message.message`,
 `message.messageText`, `message.out`, `message.peer_id`, `message.from_id`,
 `getId()`, `getDialogId()`, `isOut()`.
 
-Not available: media, files, entities/formatting, replies, reactions, chat
-titles, user names, sending new messages from a plugin.
+Not in `Message`: media, entities/formatting, replies, reactions, chat titles,
+user names. Use `get_media()` for the file of a message (see Media).
 
 ### Update hooks (ExteraGram style)
 
@@ -213,6 +214,9 @@ class Shout(BasePlugin):
 - Registration needs `messages.read`. Replacing text needs `messages.send` and
   `messages.modify`. Cancelling needs `messages.modify`.
 - `params.message` is the outgoing text. It must stay a `str`.
+- `params.chat_id` is the chat it goes to, `params.reply_to` is
+  `(chat_id, message_id)` of the replied message or `None`. Both are
+  read-only: changing them does nothing.
 - Return values:
   - `HookResult()` / `None`: no change.
   - `HookStrategy.MODIFY` with `params=params`: send the new text, next plugins still run.
@@ -289,6 +293,8 @@ class Configurable(BasePlugin):
 | `Switch` | `Switch(key, text, default: bool, subtext=None, on_change=None)` | `bool` |
 | `Input` | `Input(key, text, default: str = "", subtext=None, on_change=None)` | `str` |
 | `Selector` | `Selector(key, text, default: int, items: list[str], on_change=None)` | `int` index (1–64 items) |
+| `Slider` | `Slider(key, text, default, min, max, step, subtext=None, on_change=None)` | number; `int` when default/min/max/step are all ints |
+| `ColorPicker` | `ColorPicker(key, text, default="#FFFFFF", subtext=None, on_change=None)` | `"#RRGGBB"` (upper case) |
 
 - Values are saved automatically under `key`; read them with
   `self.get_setting(key, default)`.
@@ -296,6 +302,9 @@ class Configurable(BasePlugin):
   the user presses Enter or leaves the field.
 - Keys must be unique. `icon`, `on_long_click`, `link_alias` are accepted and
   ignored.
+- `Slider`: `min < max`, `step > 0`, at most 10000 steps. Values snap to the
+  step; `on_change` gets the value when the user releases the slider.
+- `ColorPicker` opens a color box on click. Only `#RRGGBB`, no alpha.
 
 ### Storing your own data
 
@@ -481,6 +490,29 @@ self.set_effect("scroll_motion_blur", None)
 fast. `strength` 0 – 4, `threshold` is the speed (px/ms) where it starts.
 Needs `ui`.
 
+### Particles
+
+Falling snow, petals, rain and so on over the window:
+
+```python
+self.set_effect("particles", {
+    "mode": "sakura",     # snow | sakura | matrix | rain | leaves
+    "count": 120,         # 10 – 400
+    "opacity": 0.8,       # 0 – 1
+    "speed": 1.0,         # 0.1 – 4
+    "rotation": 1.0,      # 0 – 4, how fast petals/leaves spin
+    "area": "window",     # window | chat | dialogs
+    "color": "#ffffff",   # optional, overrides the mode colors
+})
+self.set_effect("particles", {})     # all defaults: snow over the window
+self.clear_effect("particles")       # same as set_effect("particles", None)
+```
+
+- Needs `ui`. Drawn natively at 60 fps with QPainter, no images.
+- Clicks go through. Paused while the window is hidden or minimized.
+- One set per area: if two plugins use the same area, the one with the
+  later id wins. Removed on unload.
+
 ## Window parts (`self.ui`)
 
 Needs `ui.advanced`. Changes named parts of the window. Python never gets
@@ -496,9 +528,10 @@ oid = bar.add_overlay({
     "align": "left",                           # left/right/center + top/bottom
     "color": "#ffffff", "background": "#00000066",
     "rounded": 8, "font_size": 12,
-    "image": "/path/to/icon.png",            # local file, ≤ 4 MB
+    "image": "/path/to/icon.png",            # local file, ≤ 4 MB; GIF/WebP animate
     "on_click": self.clicked,                 # args: anchor, overlay, x, y
 })
+bar.update_overlay(oid, {"text": "bye"})     # change some fields in place
 bar.remove_overlay(oid)
 bar.on_event("click", self.clicked)          # click | resize | enter | leave
 bar.reset()
@@ -518,13 +551,92 @@ bar.reset()
   only observed, the client still handles the click.
 - `set_background` only shows where the widget itself is transparent.
 - At most 16 overlays per part. Everything is removed on unload.
+- `update_overlay(id, fields)` merges the fields into the overlay and
+  redraws it; unknown ids raise `ValueError`.
+- Animated GIF and WebP images play by themselves (paused while the window
+  is hidden).
+
+### Draggable overlays
+
+```python
+pet = bar.add_overlay({
+    "image": "/path/to/cat.gif", "rect": (20, 4, 48, 48),
+    "draggable": True,
+    "key": "cat",                 # optional, names the saved position
+    "on_move": self.moved,        # optional, args: anchor, overlay, x, y
+})
+```
+
+- The user drags it with the mouse; it stays inside the part.
+- The new position is remembered for the session. With `storage` it is
+  also saved (setting `_overlay_pos.<part>.<key or id>`) and restored the next
+  time the same overlay is added.
+- A short click without moving still calls `on_click`.
+
+## Window and chat
+
+```python
+class Pet(BasePlugin):
+    def on_app_active(self):          # the client window got focus
+        ...
+
+    def on_app_inactive(self):        # it lost focus or was minimized
+        ...
+
+    def on_chat_opened(self, chat_id):
+        if chat_id == self.current_chat_id():
+            ...
+```
+
+- `on_app_active` / `on_app_inactive` need `ui`; they fire on changes only.
+- `on_chat_opened(chat_id)` and `self.current_chat_id()` need
+  `messages.read`. `current_chat_id()` is the chat on screen right now, or
+  `None` when no chat is open. With several windows it is the last chat
+  opened in any of them.
+
+## Media
+
+```python
+def on_plugin_load(self):
+    self.add_menu_item(MenuItemData(
+        menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
+        text="Mirror photo", on_click=self.mirror))
+
+def mirror(self, context):
+    m = context["message"]
+    self.get_media(m.chat_id, m.message_id,
+                   lambda path: self.done(m, path))
+
+def done(self, message, path):
+    if path is None:
+        self.show_toast("No photo here")
+        return
+    out = make_mirrored_copy(path)            # your code, e.g. with Pillow
+    self.send_photo(message.chat_id, out, reply_to=message.message_id,
+                    caption="mirrored")
+```
+
+| Call | Needs | Notes |
+| --- | --- | --- |
+| `get_media(chat_id, message_id, callback)` | `messages.read` | Downloads the photo or file of a message. `callback(path)` gets a local path, or `None` if there is no media or the download failed. Photos are saved as JPEG in a temp folder; files keep their name. At most 32 waiting calls per plugin. |
+| `send_photo(chat_id, path, reply_to=None, caption=None)` | `messages.send_media` | Sends a compressed photo. |
+| `send_file(chat_id, path, reply_to=None, caption=None)` | `messages.send_media` | Sends any file as a document. |
+| `send_video_note(chat_id, path, reply_to=None)` | `messages.send_media` | Sends a round video message. The file must already be a square mp4 (H.264 + AAC), up to 60 s and 64 MB. |
+
+- `reply_to` is a message id in the same chat or `(chat_id, message_id)`.
+- `caption` is plain text, up to 4096 characters.
+- Sends go to the account of the active window. The client checks that you
+  may send that kind of media in the chat; if not, nothing is sent and the
+  reason goes to the log.
+- Sending is fire and forget: there is no callback with the sent message.
 
 ## What is NOT available
 
 So a plugin doesn't try to use things that don't exist:
 
-- Sending new messages, replying, forwarding, reacting.
-- Media, files, stickers, formatting entities.
+- Sending new text messages, forwarding, reacting (media can be sent, see
+  Media).
+- Stickers, formatting entities.
 - Chat/user info (names, titles, avatars), contacts, dialogs list.
 - Arbitrary Telegram API requests (only the two request hooks above).
 - Arbitrary Qt widgets, windows or dialogs; raw access to window parts
