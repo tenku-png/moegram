@@ -105,6 +105,11 @@ nicknames, one per line) and on `tdata`, `plugins`, `plugin-settings` or
 
 Then update `pkgver`, `_tag` and `sha256sums` in the PKGBUILD.
 
+Before committing or pushing, `scripts/check_leaks.sh` checks staged changes
+and unpushed commits (content, messages, authors) for the local user name and
+the words from `.release-forbidden`. Install it as local `pre-commit`
+(`--staged`) and `pre-push` (`--pre-push`) hooks.
+
 ## Updating AyuGram
 
 The AyuGram commit moegram is currently based on:
