@@ -18,6 +18,8 @@ target_sources(Telegram PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/events.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/message_menu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/message_menu.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_particles.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_particles.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_pills.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_pills.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_anchors.cpp

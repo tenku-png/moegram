@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "moegram/ui/plugin_anchors.h"
 #include "moegram/ui/plugin_blur.h"
+#include "moegram/ui/plugin_particles.h"
 #include "moegram/composer/composer_bridge.h"
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
@@ -434,6 +435,7 @@ HistoryWidget::HistoryWidget(
 		u"composer"_q,
 		list,
 		MoeGram::Ui::BlurEdge::Bottom);
+	MoeGram::Ui::AttachParticles(this, u"chat"_q);
 	MoeGram::Ui::AttachScrollMotionBlur(
 		_scroll.data(),
 		list,

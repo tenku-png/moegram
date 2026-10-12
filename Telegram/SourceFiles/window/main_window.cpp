@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 // AyuGram includes
 #include "ayu/ui/ayu_logo.h"
+#include "moegram/ui/plugin_particles.h"
 
 
 namespace Window {
@@ -459,6 +460,7 @@ MainWindow::MainWindow(not_null<Controller*> controller)
 	) | rpl::on_next([=](QSize size) {
 		updateControlsGeometry();
 	}, lifetime());
+	MoeGram::Ui::AttachParticles(body(), u"window"_q);
 
 	if (_outdated) {
 		_outdated->heightValue(

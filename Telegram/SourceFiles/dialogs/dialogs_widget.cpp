@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "moegram/ui/plugin_anchors.h"
 #include "moegram/ui/plugin_blur.h"
+#include "moegram/ui/plugin_particles.h"
 #include "moegram/ui/plugin_pills.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/options.h"
@@ -737,6 +738,7 @@ Widget::Widget(
 		u"dialogs_header"_q,
 		[=]() -> QWidget* { return _inner; },
 		MoeGram::Ui::BlurEdge::Top);
+	MoeGram::Ui::AttachParticles(this, u"dialogs"_q);
 	MoeGram::Ui::AttachScrollMotionBlur(
 		_scroll.data(),
 		[=]() -> QWidget* { return _inner; },
