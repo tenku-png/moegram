@@ -199,12 +199,13 @@ void ShowRoundBox(
 				d / frame.width(),
 				d / frame.height());
 			const auto from = std::min(state->from, duration - crl::time(500));
+			const auto till = std::min(from + state->length, duration);
 			box->closeBox();
 			done({
 				.path = candidate.path,
 				.crop = crop,
 				.from = from,
-				.till = std::min(from + state->length, duration),
+				.till = till,
 			});
 		});
 		box->addButton(rpl::single(u"Cancel"_q), [=] { box->closeBox(); });
