@@ -81,8 +81,10 @@ Other commits: engine `d20a92d` (engine 0.11.0), moegram `392a44da0b`
   configuring `out/arch-release` with `-ffile-prefix-map=$PWD=.`. The 1.1.0
   binary and archive have no `$HOME` paths or mail strings; the only
   `tdata` hits are generic strings in the client code (`tdata/config`, …).
-  Keep these flags for future releases (they are build-dir options, not
-  committed).
+  Later moved into the repo: the maps are in the top `CMakeLists.txt` and
+  `scripts/build_tde2e.sh`, and `scripts/release.sh` runs
+  `scripts/check_release_clean.sh` before publishing. The 1.0.1 archive was
+  removed from its release.
 - First Release link failed with undefined `AttachParticles`: the build was
   started before the new files were added to CMake. A second incremental run
   fixed it. No build or test failures in the new code otherwise, nothing was

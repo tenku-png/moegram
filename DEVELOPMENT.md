@@ -38,16 +38,12 @@ Runtime libraries are the same as the `depends` list in
 `packaging/aur/moegram-bin/PKGBUILD`. Python 3.11+ is required; the binary is
 tied to the Python minor version it was built with.
 
-`tde2e` from TDLib (commit taken from the AyuGram PKGBUILD):
+`tde2e` from TDLib (commit taken from the AyuGram PKGBUILD), built into
+`out/arch/deps/tdlib-install` with path maps so no local paths end up in the
+binary:
 
 ```sh
-git clone https://github.com/tdlib/td.git out/arch/deps/tdlib
-git -C out/arch/deps/tdlib checkout 022d60202e446ad1287b9fb68e687c8a0760788b
-cmake -S out/arch/deps/tdlib -B out/arch/deps/tdlib-build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DTD_E2E_ONLY=ON \
-  -DCMAKE_INSTALL_PREFIX="$PWD/out/arch/deps/tdlib-install"
-cmake --build out/arch/deps/tdlib-build
-cmake --install out/arch/deps/tdlib-build
+scripts/build_tde2e.sh
 ```
 
 Client:
@@ -91,19 +87,22 @@ build and run the `moegram_*_smoke` targets in
 ## Release
 
 ```sh
-cmake -S . -B out/arch-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/usr -DDESKTOP_APP_USE_PACKAGED=ON \
-  -DDESKTOP_APP_DISABLE_AUTOUPDATE=ON -DDESKTOP_APP_DISABLE_CRASH_REPORTS=ON \
-  -DTDESKTOP_API_TEST=ON \
-  -Dtde2e_DIR="$PWD/out/arch/deps/tdlib-install/lib/cmake/tde2e"
-cmake --build out/arch-release --target Telegram
-DESTDIR="$PWD/out/release-stage" cmake --install out/arch-release
-strip --strip-unneeded out/release-stage/usr/bin/moegram
-tar -C out/release-stage -c --zstd -f moegram-vX.Y.Z-x86_64.tar.zst usr
+git tag vX.Y.Z && git push origin vX.Y.Z
+scripts/release.sh X.Y.Z notes.md
 ```
 
-Upload the archive to a GitHub release (`gh release create ... -R tenku-png/moegram`),
-then update `pkgver`, `_tag` and `sha256sums` in the PKGBUILD.
+The script configures `out/arch-release`, builds, stages, strips and packs
+`out/moegram-vX.Y.Z-x86_64.tar.zst`, then runs `scripts/check_release_clean.sh`
+on the binary and the archive and only then calls `gh release create` (the
+sha256 is appended to the notes). `--build-only X.Y.Z` stops before publishing.
+
+Release builds map the source dir to `.` and `$HOME` to `~`
+(`-ffile-prefix-map` in the top `CMakeLists.txt`), so `__FILE__` and debug
+info don't carry local paths. The check fails on `/home/`, the author's mail,
+`/$USER/`, `~$USER`, `$USER@` and on `tdata`, `plugins`, `plugin-settings` or
+`log.txt` in the archive.
+
+Then update `pkgver`, `_tag` and `sha256sums` in the PKGBUILD.
 
 ## Updating AyuGram
 
