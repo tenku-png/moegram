@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 
+#include "moegram/ui/plugin_menus.h"
 #include "apiwrap.h"
 #include "base/event_filter.h"
 #include "base/qt_signal_producer.h"
@@ -845,6 +846,9 @@ void MainMenu::setupMenu() {
 	)->setClickedCallback([=] {
 		controller->showSettings();
 	});
+	MoeGram::Ui::SetupMainMenuItems(
+		_menu->add(object_ptr<Ui::VerticalLayout>(_menu)),
+		controller);
 
 	if (settings.showNightModeToggleInDrawer()) {
 

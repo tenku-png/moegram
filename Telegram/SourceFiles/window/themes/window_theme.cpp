@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/themes/window_theme.h"
 
+#include "moegram/ui/plugin_ui.h"
+
 #include "window/themes/window_theme_preview.h"
 #include "window/themes/window_themes_chat.h"
 #include "window/themes/window_themes_embedded.h"
@@ -1321,7 +1323,7 @@ bool Apply(std::unique_ptr<Preview> preview) {
 	GlobalApplying.data.object = std::move(preview->object);
 	GlobalApplying.data.cache = std::move(preview->instance.cached);
 	if (GlobalApplying.paletteForRevert.isEmpty()) {
-		GlobalApplying.paletteForRevert = style::main_palette::save();
+		GlobalApplying.paletteForRevert = MoeGram::Ui::PaletteForSave();
 	}
 	Background()->setTestingTheme(std::move(preview->instance));
 	return true;
@@ -1335,7 +1337,7 @@ void ApplyDefaultWithPath(const QString &themePath) {
 	} else {
 		GlobalApplying.data = Saved();
 		if (GlobalApplying.paletteForRevert.isEmpty()) {
-			GlobalApplying.paletteForRevert = style::main_palette::save();
+			GlobalApplying.paletteForRevert = MoeGram::Ui::PaletteForSave();
 		}
 		Background()->setTestingDefaultTheme();
 	}
@@ -1382,7 +1384,7 @@ void KeepFromEditor(
 	auto saved = Saved();
 	auto &cache = saved.cache;
 	auto &object = saved.object;
-	cache.colors = style::main_palette::save();
+	cache.colors = MoeGram::Ui::PaletteForSave();
 	cache.paletteChecksum = style::palette::Checksum();
 	cache.contentChecksum = base::crc32(content.constData(), content.size());
 	cache.background = themeParsed.background;

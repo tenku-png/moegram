@@ -8,6 +8,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_widget.h"
 
 #include "base/call_delayed.h"
+#include "moegram/ui/plugin_anchors.h"
+#include "moegram/ui/plugin_blur.h"
+#include "moegram/ui/plugin_pills.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/options.h"
 #include "dialogs/ui/chat_search_in.h"
@@ -479,6 +482,7 @@ Widget::Widget(
 	_searchControls,
 	object_ptr<Ui::IconButton>(this, st::dialogsCalendar))
 , _cancelSearch(_searchControls, st::dialogsCancelSearch)
+, _pluginPills(_searchControls)
 , _lockUnlock(
 	_searchControls,
 	object_ptr<Ui::IconButton>(this, st::dialogsLock))
@@ -724,6 +728,30 @@ Widget::Widget(
 			checkUpdateStatus();
 		}, lifetime());
 	}
+
+	MoeGram::Ui::RegisterAnchor(_searchControls.data(), u"dialogs.header"_q);
+	MoeGram::Ui::RegisterAnchor(_search.data(), u"dialogs.search"_q);
+	MoeGram::Ui::RegisterAnchor(_scroll.data(), u"dialogs.list"_q);
+	MoeGram::Ui::AttachEdgeBlur(
+		this,
+		u"dialogs_header"_q,
+		[=]() -> QWidget* { return _inner; },
+		MoeGram::Ui::BlurEdge::Top);
+	MoeGram::Ui::AttachScrollMotionBlur(
+		_scroll.data(),
+		[=]() -> QWidget* { return _inner; },
+		_scroll->scrolls() | rpl::map([=] { return _scroll->scrollTop(); }));
+
+	_pluginPills->widthValueWanted(
+	) | rpl::skip(1) | rpl::on_next([=] {
+		_pluginPills->setVisible(_pluginPills->width() > 0
+			&& _searchState.query.isEmpty()
+			&& !searchInPeer());
+		updateSearchMargins();
+		updateControlsGeometry();
+	}, lifetime());
+	_pluginPills->setVisible(_pluginPills->width() > 0);
+	updateSearchMargins();
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });
@@ -3993,6 +4021,13 @@ void Widget::listScrollUpdated() {
 }
 
 void Widget::updateCancelSearch() {
+	const auto pills = (_pluginPills->width() > 0)
+		&& _searchState.query.isEmpty()
+		&& !searchInPeer();
+	if (_pluginPills->isHidden() == pills) {
+		_pluginPills->setVisible(pills);
+		updateSearchMargins();
+	}
 	const auto shown = !_searchState.query.isEmpty()
 		|| (!_searchState.inChat
 			&& (searchActive() || _searchSuggestionsLocked));
@@ -4631,12 +4666,19 @@ void Widget::updateSearchFromVisibility(bool fast) {
 	if (_subsectionTopBar) {
 		_subsectionTopBar->searchEnableChooseFromUser(true, visible);
 	} else if (changed) {
-		auto additional = QMargins();
-		if (visible) {
-			additional.setRight(_chooseFromUser->width());
-		}
-		_search->setAdditionalMargins(additional);
+		updateSearchMargins();
 	}
+}
+
+void Widget::updateSearchMargins() {
+	auto additional = QMargins();
+	if (_chooseFromUser->toggled() && !_subsectionTopBar) {
+		additional.setRight(_chooseFromUser->width());
+	}
+	if (!_pluginPills->isHidden()) {
+		additional.setRight(additional.right() + _pluginPills->width());
+	}
+	_search->setAdditionalMargins(additional);
 }
 
 void Widget::updateControlsGeometry() {
@@ -4706,6 +4748,10 @@ void Widget::updateControlsGeometry() {
 	_jumpToDate->moveToLeft(right, _search->y());
 	right -= _chooseFromUser->width();
 	_chooseFromUser->moveToLeft(right, _search->y());
+	_pluginPills->setPillHeight(_search->height());
+	_pluginPills->moveToLeft(
+		filterLeft + filterWidth - _cancelSearch->width() - _pluginPills->width(),
+		_search->y());
 
 	const auto barw = width();
 	const auto expandedStoriesTop = filterAreaTop + filterAreaHeight;
@@ -4996,7 +5042,13 @@ void Widget::paintEvent(QPaintEvent *e) {
 		st::dialogsBgOver,
 		_childListShown.current());
 	auto above = QRect(0, 0, width(), _scroll->y());
-	if (above.intersects(r)) {
+	if (above.intersects(r)
+		&& !MoeGram::Ui::PaintEdgeBlur(
+			this,
+			u"dialogs_header"_q,
+			p,
+			above,
+			st::dialogsBg)) {
 		p.fillRect(above.intersected(r), bg);
 	}
 

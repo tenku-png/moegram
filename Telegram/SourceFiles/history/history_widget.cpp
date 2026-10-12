@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
 
+#include "moegram/ui/plugin_anchors.h"
+#include "moegram/ui/plugin_blur.h"
 #include "moegram/composer/composer_bridge.h"
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
@@ -418,6 +420,24 @@ HistoryWidget::HistoryWidget(
 	_scroll->scrolls() | rpl::on_next([=] {
 		handleScroll();
 	}, lifetime());
+	MoeGram::Ui::RegisterAnchor(_topBar.data(), u"chat.top_bar"_q);
+	MoeGram::Ui::RegisterAnchor(_scroll.data(), u"chat.list"_q);
+	MoeGram::Ui::RegisterAnchor(_field.data(), u"compose.field"_q);
+	const auto list = [=]() -> QWidget* { return _list; };
+	MoeGram::Ui::AttachEdgeBlur(
+		_topBar.data(),
+		u"chat_header"_q,
+		list,
+		MoeGram::Ui::BlurEdge::Top);
+	MoeGram::Ui::AttachEdgeBlur(
+		this,
+		u"composer"_q,
+		list,
+		MoeGram::Ui::BlurEdge::Bottom);
+	MoeGram::Ui::AttachScrollMotionBlur(
+		_scroll.data(),
+		list,
+		_scroll->scrolls() | rpl::map([=] { return _scroll->scrollTop(); }));
 	_scroll->setOverscrollTypes(
 		Ui::ElasticScroll::OverscrollType::Real,
 		Ui::ElasticScroll::OverscrollType::Real);
@@ -11352,7 +11372,10 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 	}
 	p.setInactive(
 		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
-	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
+	const auto back = myrtlrect(0, backy, width(), backh);
+	if (!MoeGram::Ui::PaintEdgeBlur(this, u"composer"_q, p, back, st::historyReplyBg)) {
+		p.fillRect(back, st::historyReplyBg);
+	}
 
 	const auto media = (!_previewDrawPreview && drawMsgText)
 		? drawMsgText->media()

@@ -73,12 +73,13 @@ it**, so the rules are strict:
 | `messages.read` | Receiving messages, edits, deletes, updates, request hooks, outgoing message hook |
 | `messages.send` | Replacing the text of an outgoing message (needs `messages.modify` too) |
 | `messages.modify` | Cancelling/replacing outgoing messages, cancelling/modifying requests |
-| `ui` | Menu items, toasts, settings page, composer effects |
+| `ui` | Menu items, toasts, settings page, composer effects, pill, timers, palette, chat header, blur, effects |
+| `ui.advanced` | `self.ui.find()`: changing named parts of the window |
 | `storage` | `get_setting` / `set_setting` |
 
 Two modes:
 
-- **No `__capabilities__`** (legacy): all five are allowed on first install.
+- **No `__capabilities__`** (legacy): all of them are allowed on first install.
   Simplest choice for personal plugins.
 - **Declared `__capabilities__`**: every listed capability starts **denied**.
   The user has to allow them in Settings → Plugins → ⓘ (Permissions), then
@@ -328,10 +329,33 @@ class MessageInfo(BasePlugin):
 ```
 
 - Needs `ui` (and `messages.read` for clicks).
-- Only `MESSAGE_CONTEXT_MENU` is supported. Other menu types raise `ValueError`.
 - `context` keys: `account`, `dialog_id`, `message`.
 - Register in `on_plugin_load`. Higher `priority` is shown first.
   `icon`, `subtext`, `condition` are ignored.
+
+### Main menu and chat menu
+
+The same `add_menu_item` also adds items to the main (drawer) menu and to
+the menu of a chat (right click in the chat list, ⋮ in the chat header):
+
+```python
+self.add_menu_item(MenuItemData(
+    menu_type=MenuItemType.DRAWER_MENU,        # MAIN_MENU works too
+    text="Clean up",
+    on_click=lambda ctx: self.show_toast("clean!"),
+))
+self.add_menu_item(MenuItemData(
+    menu_type=MenuItemType.CHAT_ACTION_MENU,
+    text="Chat ID",
+    on_click=lambda ctx: self.show_toast(str(ctx["chat_id"])),
+))
+```
+
+- Needs `ui` only.
+- Drawer `context`: `account`. Chat `context`: `account`, `chat_id`
+  (`dialog_id` is the same value).
+- At most 16 items per menu per plugin. `self.remove_menu_item(item_id)`
+  removes one. `PROFILE_ACTION_MENU` is not supported.
 
 ## Toasts
 
@@ -368,6 +392,133 @@ class Effects(BasePlugin):
 Invalid values raise `ValueError`. Rendering is native; the plugin only
 describes the configuration.
 
+## Pill and timers
+
+A small label on the right of the chat list search field.
+
+```python
+self.set_pill("RAM 41%", on_click=self.clicked)   # on_click is optional
+self.set_pill(None)                               # remove
+
+timer = self.set_interval(2, self.tick)   # seconds, 0.5 – 3600
+self.clear_interval(timer)
+```
+
+- Needs `ui`. Text is trimmed to 48 characters.
+- A timer never stacks: if your callback is slow, ticks are skipped.
+- At most 8 timers per plugin. Pill and timers are removed on unload.
+
+## Palette
+
+Override theme colors on top of the current theme:
+
+```python
+self.set_palette({
+    "windowBg": "#101014",
+    "windowFg": "#e8e8f0",
+    "historyComposeAreaBg": "#16161cee",   # #RRGGBBAA works too
+})
+self.set_palette(None)   # remove your colors
+```
+
+- Needs `ui`. Keys are tdesktop palette names (see any `.tdesktop-theme`
+  file, or Settings → Chat settings → Edit theme). Unknown keys are ignored.
+- Every plugin is a layer; plugins are applied in id order, later layers win.
+- Switching the theme keeps your colors on top. Saving/exporting a theme
+  never includes plugin colors. Everything is reverted on unload.
+
+## Chat header
+
+Badges, buttons and a status line in the header of the open chat:
+
+```python
+self.set_chat_header({
+    "subtitle": "focus mode",                   # replaces "last seen…"
+    "badges": [{"text": "PRO", "color": "#ffffff", "background": "#7a5cff"}],
+    "buttons": [{"text": "Mute", "on_click": self.mute}],
+    "background": "#7a5cff22",                  # tint over the header
+})
+self.set_chat_header(None)
+```
+
+- Needs `ui`. At most 6 badges + buttons in total, 24 characters each.
+- `on_click(args)` gets `{"text": ...}` (or call it without arguments).
+
+## Blur
+
+Frosted glass for menus and bars:
+
+```python
+self.set_blur("menu", radius=16, opacity=0.75, tint="#00000022")
+self.set_blur("chat_header", radius=24, opacity=0.6)
+self.clear_blur("menu")
+```
+
+| Target | What is blurred |
+| --- | --- |
+| `menu` | Every popup menu: the window under it shows through. |
+| `chat_header` | Chat header shows the messages next to it, blurred. |
+| `composer` | Message input area, same idea. |
+| `dialogs_header` | Search bar above the chat list. |
+
+- Needs `ui`. `radius` 1 – 64, `opacity` 0 – 1 (opacity of the normal
+  background over the blur), `tint` optional `#RRGGBB(AA)`.
+- Blur is computed on a ¼ size copy and refreshed at most ~30 times a
+  second, so it's cheap. The bars don't move: messages don't actually
+  scroll under the header, the header shows a blurred copy of the nearest
+  strip of the list.
+- Menu blur only sees moegram's own windows (Wayland doesn't allow reading
+  other apps). Menus created before you turned blur on stay opaque.
+
+## Effects
+
+```python
+self.set_effect("scroll_motion_blur", {"strength": 1.0, "threshold": 1.5})
+self.set_effect("scroll_motion_blur", None)
+```
+
+`scroll_motion_blur` smears the chat and the chat list while you scroll
+fast. `strength` 0 – 4, `threshold` is the speed (px/ms) where it starts.
+Needs `ui`.
+
+## Window parts (`self.ui`)
+
+Needs `ui.advanced`. Changes named parts of the window. Python never gets
+the widget itself, only a handle with a name; the client applies changes.
+
+```python
+bar = self.ui.find("chat.top_bar")
+bar.set_opacity(0.9)
+bar.set_visible(False)            # invisible and click-through, keeps its space
+bar.set_background("#20202a")     # painted under the widget
+oid = bar.add_overlay({
+    "text": "hi", "rect": (8, 4, 120, 24),   # px from the top left; w/h <= 0 = to the edge
+    "align": "left",                           # left/right/center + top/bottom
+    "color": "#ffffff", "background": "#00000066",
+    "rounded": 8, "font_size": 12,
+    "image": "/path/to/icon.png",            # local file, ≤ 4 MB
+    "on_click": self.clicked,                 # args: anchor, overlay, x, y
+})
+bar.remove_overlay(oid)
+bar.on_event("click", self.clicked)          # click | resize | enter | leave
+bar.reset()
+```
+
+| Name | Part |
+| --- | --- |
+| `chat.top_bar` | Header of the open chat |
+| `chat.list` | Message list |
+| `compose.field` | Message input field |
+| `dialogs.header` | Search bar area above the chat list |
+| `dialogs.search` | The search field |
+| `dialogs.list` | Chat list |
+
+- `on_event` callbacks get `{"anchor", "event", ...}`: clicks add `x`, `y`;
+  resize adds `width`, `height` (sent at most every 100 ms). Events are
+  only observed, the client still handles the click.
+- `set_background` only shows where the widget itself is transparent.
+- At most 16 overlays per part. Everything is removed on unload.
+
 ## What is NOT available
 
 So a plugin doesn't try to use things that don't exist:
@@ -376,8 +527,9 @@ So a plugin doesn't try to use things that don't exist:
 - Media, files, stickers, formatting entities.
 - Chat/user info (names, titles, avatars), contacts, dialogs list.
 - Arbitrary Telegram API requests (only the two request hooks above).
-- Custom UI widgets, windows, dialogs, buttons outside the settings page.
-- Menus other than the message context menu.
+- Arbitrary Qt widgets, windows or dialogs; raw access to window parts
+  (only the descriptions above).
+- The profile menu (`PROFILE_ACTION_MENU`).
 - Android/ExteraGram modules: `android_utils`, `client_utils`, `hook_utils`,
   `java`, `org.telegram.*`, `markdown_utils`, Xposed-style method hooks.
 
