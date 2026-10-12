@@ -222,6 +222,7 @@ private:
 		Ui::SendFilesWay way,
 		bool silent = false) const;
 	void addMenuButton();
+	void setupSendAsRound();
 	void applyBlockChanges();
 	void toggleSpoilers(bool enabled);
 	void setSendLargePhotos(bool enabled);

@@ -21,6 +21,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "menu/menu_checked_action.h"
 #include "menu/menu_send.h"
+#include "moegram/ui/round_video_box.h"
+#include "data/data_session.h"
+#include "history/history.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
 #include "chat_helpers/field_autocomplete.h"
 #include "chat_helpers/tabbed_panel.h"
@@ -1062,6 +1065,7 @@ void SendFilesBox::refreshButtons() {
 			_sendMenuCallback,
 			&_st.tabbed.menu,
 			&_st.tabbed.icons);
+		setupSendAsRound();
 	}
 	addButton(tr::lng_cancel(), [=] {
 		requestToTakeTextWithTags();
@@ -1074,6 +1078,44 @@ void SendFilesBox::refreshButtons() {
 		}));
 
 	addMenuButton();
+}
+
+void SendFilesBox::setupSendAsRound() {
+	MoeGram::Ui::SetupSendAsRound(
+		_send,
+		_show,
+		_sendMenuDetails,
+		_sendMenuCallback,
+		[=]() -> std::optional<MoeGram::Ui::RoundCandidate> {
+			if (_list.files.size() != 1
+				|| !Data::CanSend(_toPeer, ChatRestriction::SendVideoMessages)) {
+				return std::nullopt;
+			}
+			const auto &file = _list.files.front();
+			const auto video = file.information
+				? std::get_if<Ui::PreparedFileInformation::Video>(
+					&file.information->media)
+				: nullptr;
+			if (file.type != Ui::PreparedFile::Type::Video
+				|| !video
+				|| video->duration <= 0
+				|| file.path.isEmpty()) {
+				return std::nullopt;
+			}
+			return MoeGram::Ui::RoundCandidate{
+				.path = file.path,
+				.frame = video->thumbnail,
+				.duration = video->duration,
+			};
+		},
+		[=] {
+			auto action = Api::SendAction(_toPeer->owner().history(_toPeer));
+			action.replyTo = _replyTo;
+			return action;
+		},
+		crl::guard(this, [=] { closeBox(); }),
+		&_st.tabbed.menu,
+		&_st.tabbed.icons);
 }
 
 bool SendFilesBox::hasSendMenu(const MenuDetails &details) const {

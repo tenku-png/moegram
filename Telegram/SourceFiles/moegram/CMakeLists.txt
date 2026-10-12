@@ -33,6 +33,10 @@ target_sources(Telegram PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_menus.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_menus.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_ui.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/round_video_box.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/round_video_box.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/media/round_video_converter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/media/round_video_converter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/plugin_ui.h
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/application_bridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge/application_bridge.h
