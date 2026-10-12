@@ -624,7 +624,10 @@ private:
 				const auto label = permission.capability == u"messages.read"_q ? u"Read messages"_q
 					: permission.capability == u"messages.send"_q ? u"Send messages"_q
 					: permission.capability == u"messages.modify"_q ? u"Modify messages"_q
-					: permission.capability == u"ui"_q ? u"UI access"_q : u"Plugin storage"_q;
+					: permission.capability == u"messages.send_media"_q ? u"Send media"_q
+					: permission.capability == u"ui"_q ? u"UI access"_q
+					: permission.capability == u"ui.advanced"_q ? u"Window parts"_q
+					: u"Plugin storage"_q;
 				const auto toggle = box->addRow(object_ptr<Ui::Checkbox>(
 					box, label + (permission.allowed ? u" — Allowed"_q : u" — Denied"_q), permission.allowed), st::boxRowPadding);
 				toggle->checkedChanges() | rpl::on_next([=](bool allowed) {
