@@ -132,6 +132,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 // AyuGram includes
 #include "ayu/ayu_settings.h"
+#include "moegram/bridge/application_bridge.h"
 
 
 namespace Window {
@@ -1926,6 +1927,7 @@ void SessionController::init() {
 	}, lifetime());
 	setupShortcuts();
 	setupScreenshotProtection();
+	MoeGram::Bridge::TrackActiveChat(this);
 }
 
 void SessionController::setupScreenshotProtection() {

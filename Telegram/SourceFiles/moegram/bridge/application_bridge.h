@@ -4,6 +4,7 @@
 
 namespace Core { class Application; }
 namespace MoeGram::Plugins { class Host; }
+namespace Window { class SessionController; }
 
 namespace MoeGram::Bridge {
 
@@ -14,7 +15,11 @@ public:
 
 private:
 	std::unique_ptr<Plugins::Host> _host;
+	rpl::lifetime _lifetime;
 
 };
+
+// Tells plugins which chat this window shows ("chat_opened").
+void TrackActiveChat(not_null<Window::SessionController*> controller);
 
 }
