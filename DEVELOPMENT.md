@@ -98,8 +98,9 @@ sha256 is appended to the notes). `--build-only X.Y.Z` stops before publishing.
 
 Release builds map the source dir to `.` and `$HOME` to `~`
 (`-ffile-prefix-map` in the top `CMakeLists.txt`), so `__FILE__` and debug
-info don't carry local paths. The check fails on `/home/`, the author's mail,
-`/$USER/`, `~$USER`, `$USER@` and on `tdata`, `plugins`, `plugin-settings` or
+info don't carry local paths. The check fails on `/home/`, `/$USER/`,
+`~$USER`, `$USER@`, on words from the untracked `.release-forbidden` (mail,
+nicknames, one per line) and on `tdata`, `plugins`, `plugin-settings` or
 `log.txt` in the archive.
 
 Then update `pkgver`, `_tag` and `sha256sums` in the PKGBUILD.

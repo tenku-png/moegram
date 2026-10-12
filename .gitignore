@@ -85,3 +85,6 @@ tdata/
 # Local test workdirs
 MoeGramTest/
 /.dev-notes/
+
+# Local words the release check must not find (mail, nicknames).
+/.release-forbidden
