@@ -9,6 +9,8 @@
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/discrete_sliders.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/color_editor.h"
+#include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
@@ -24,6 +26,7 @@
 #include "styles/style_layers.h"
 
 #include <algorithm>
+#include "styles/style_ayu_styles.h"
 #include "styles/style_settings.h"
 #include "styles/style_settings_moegram_plugins.h"
 #include "styles/style_widgets.h"
@@ -115,6 +118,117 @@ void RefreshAfterChange(
 		return;
 	}
 	ShowPluginSettings(content, std::move(pluginId));
+}
+
+void AddSliderRow(
+		not_null<Ui::VerticalLayout*> content,
+		QPointer<Ui::VerticalLayout> weakContent,
+		const QString &pluginId,
+		const MoeGram::Plugins::SettingItem &item) {
+	const auto steps = int(std::round(
+		(item.maximum - item.minimum) / item.step)) + 1;
+	if (steps < 2) {
+		return;
+	}
+	const auto integer = (std::floor(item.step) == item.step)
+		&& (std::floor(item.minimum) == item.minimum);
+	const auto decimals = integer
+		? 0
+		: std::clamp(int(std::ceil(-std::log10(item.step))), 1, 4);
+	const auto valueAt = [=](int index) {
+		return std::min(item.minimum + index * item.step, item.maximum);
+	};
+	const auto format = [=](int index) {
+		return QString::number(valueAt(index), 'f', decimals);
+	};
+	const auto current = std::clamp(
+		int(std::round((item.number - item.minimum) / item.step)),
+		0,
+		steps - 1);
+	Ui::AddSkip(content);
+	Ui::AddSubsectionTitle(content, rpl::single(item.text));
+	auto sliderWithLabel = MakeSliderWithLabel(
+		content,
+		st::autoDownloadLimitSlider,
+		st::settingsScaleLabel,
+		0,
+		st::settingsScaleLabel.style.font->width(format(steps - 1) + u"0"_q),
+		true);
+	content->add(
+		std::move(sliderWithLabel.widget),
+		st::recentStickersLimitPadding);
+	const auto slider = sliderWithLabel.slider;
+	const auto label = sliderWithLabel.label;
+	label->setText(format(current));
+	const auto key = item.key;
+	slider->setPseudoDiscrete(
+		steps,
+		[](int index) { return index; },
+		current,
+		[=](int index) { label->setText(format(index)); },
+		[=](int index) {
+			label->setText(format(index));
+			(void)MoeGram::Plugins::UpdatePluginSetting(
+				pluginId,
+				key,
+				valueAt(index),
+				[weakContent, pluginId](bool reload) {
+					RefreshAfterChange(weakContent, pluginId, reload);
+				});
+		});
+	if (!item.subtext.isEmpty()) {
+		AddText(content, QString(), item.subtext);
+	}
+}
+
+void AddColorRow(
+		not_null<Ui::VerticalLayout*> content,
+		QPointer<Ui::VerticalLayout> weakContent,
+		not_null<Window::SessionController*> controller,
+		const QString &pluginId,
+		const MoeGram::Plugins::SettingItem &item) {
+	const auto label = std::make_shared<rpl::variable<QString>>(item.value);
+	const auto button = AddButtonWithLabel(
+		content,
+		rpl::single(item.text),
+		label->value(),
+		st::settingsButtonNoIcon);
+	const auto key = item.key;
+	const auto title = item.text;
+	button->setClickedCallback([=] {
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			const auto editor = box->addRow(object_ptr<ColorEditor>(
+				box,
+				ColorEditor::Mode::HSL,
+				QColor(label->current())));
+			const auto save = [=] {
+				const auto color = editor->color();
+				const auto name = color.name(QColor::HexRgb).toUpper();
+				box->closeBox();
+				if (!weakContent || name == label->current()) {
+					return;
+				}
+				*label = name;
+				(void)MoeGram::Plugins::UpdatePluginSetting(
+					pluginId,
+					key,
+					name,
+					[weakContent, pluginId](bool reload) {
+						RefreshAfterChange(weakContent, pluginId, reload);
+					});
+			};
+			editor->submitRequests(
+			) | rpl::on_next(save, editor->lifetime());
+			box->setFocusCallback([=] { editor->setInnerFocus(); });
+			box->addButton(rpl::single(u"Save"_q), save);
+			box->addButton(rpl::single(u"Cancel"_q), [=] { box->closeBox(); });
+			box->setTitle(rpl::single(title));
+			box->setWidth(editor->width());
+		}));
+	});
+	if (!item.subtext.isEmpty()) {
+		AddText(content, QString(), item.subtext);
+	}
 }
 
 void AddSettingRows(
@@ -231,6 +345,12 @@ void AddSettingRows(
 					});
 				}));
 			});
+		} break;
+		case MoeGram::Plugins::SettingKind::Slider: {
+			AddSliderRow(content, weakContent, page.id, item);
+		} break;
+		case MoeGram::Plugins::SettingKind::Color: {
+			AddColorRow(content, weakContent, controller, page.id, item);
 		} break;
 		case MoeGram::Plugins::SettingKind::Error:
 			AddText(content, item.text);
