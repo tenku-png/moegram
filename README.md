@@ -37,8 +37,19 @@ source using the steps below.
 
 ## Plugins
 
-Plugins are single Python files. See [docs/PLUGINS.md](docs/PLUGINS.md)
-for how to write one.
+Plugins are single Python files, mostly source compatible with exteraGram
+plugins. They can:
+
+- read messages and change outgoing ones, hook Telegram requests;
+- add items to the message, chat and main menus;
+- have a settings page and store data;
+- show toasts, a pill next to the chat search, run timers;
+- recolor the theme, add badges and buttons to the chat header;
+- turn on frosted glass for menus and bars, and composer animations;
+- change named parts of the window (`ui.advanced`).
+
+See [docs/PLUGINS.md](docs/PLUGINS.md) for how to write one, and
+[docs/examples](docs/examples) for ready plugins.
 
 ## Build
 
