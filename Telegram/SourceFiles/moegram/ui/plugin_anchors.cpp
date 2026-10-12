@@ -11,6 +11,8 @@
 #include <QtCore/QJsonObject>
 #include <QtGui/QImageReader>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QMovie>
+#include <QtWidgets/QApplication>
 #include <QtWidgets/QGraphicsOpacityEffect>
 
 namespace MoeGram::Ui {
@@ -30,7 +32,51 @@ struct Overlay {
 	std::optional<QColor> color;
 	std::optional<QColor> background;
 	QImage image;
+	QString animation;
 	QJsonValue callback;
+	QJsonValue drag;
+	bool draggable = false;
+};
+
+bool IsAnimated(const QString &path) {
+	const auto info = QFileInfo(path);
+	if (!info.isFile() || info.size() > kMaxImageBytes) {
+		return false;
+	}
+	auto reader = QImageReader(path);
+	return reader.supportsAnimation() && reader.imageCount() != 1;
+}
+
+// Takes clicks and drags for one overlay; the paint layer itself is mouse transparent.
+class OverlayHit final : public ::Ui::RpWidget {
+public:
+	using Handler = Fn<void(QEvent::Type, QPoint)>;
+	OverlayHit(not_null<QWidget*> parent, Handler handler)
+	: RpWidget(parent)
+	, _handler(std::move(handler)) {
+	}
+
+protected:
+	void mousePressEvent(QMouseEvent *e) override {
+		handle(e);
+	}
+	void mouseMoveEvent(QMouseEvent *e) override {
+		handle(e);
+	}
+	void mouseReleaseEvent(QMouseEvent *e) override {
+		handle(e);
+	}
+
+private:
+	void handle(QMouseEvent *e) {
+		if (e->button() == Qt::LeftButton
+			|| (e->buttons() & Qt::LeftButton)) {
+			_handler(e->type(), e->globalPosition().toPoint());
+		}
+	}
+
+	const Handler _handler;
+
 };
 
 QImage LoadImage(const QString &path) {
@@ -96,16 +142,31 @@ public:
 
 protected:
 	void paintEvent(QPaintEvent *e) override;
+	void showEvent(QShowEvent *e) override;
+	void hideEvent(QHideEvent *e) override;
 	bool eventFilter(QObject *o, QEvent *e) override;
 
 private:
+	struct Drag {
+		int index = -1;
+		QPoint start;
+		QPoint origin;
+		bool moved = false;
+	};
+
 	void send(const QString &event, QJsonObject args = {});
-	[[nodiscard]] int overlayAt(QPoint point) const;
 	[[nodiscard]] QRect overlayRect(const Overlay &overlay) const;
+	void refreshMovies();
+	void refreshHits();
+	void raiseAll();
+	void hitEvent(int index, QEvent::Type type, QPoint global);
 
 	const not_null<QWidget*> _anchor;
 	const QString _name;
 	std::vector<Overlay> _overlays;
+	std::map<QString, std::unique_ptr<QMovie>> _movies;
+	std::vector<base::unique_qptr<OverlayHit>> _hits;
+	Drag _drag;
 	std::optional<QColor> _background;
 	QPointer<QGraphicsOpacityEffect> _effect;
 	bool _hidden = false;
@@ -178,10 +239,16 @@ void AnchorLayer::apply() {
 				.color = ParseColor(object.value(u"color"_q)),
 				.background = ParseColor(object.value(u"background"_q)),
 				.callback = object.value(u"on_click"_q),
+				.drag = object.value(u"on_drag"_q),
+				.draggable = object.value(u"draggable"_q).toBool(),
 			};
 			if (const auto path = object.value(u"image"_q).toString()
 					; !path.isEmpty()) {
-				overlay.image = LoadImage(path);
+				if (IsAnimated(path)) {
+					overlay.animation = path;
+				} else {
+					overlay.image = LoadImage(path);
+				}
 			}
 			_overlays.push_back(std::move(overlay));
 		}
@@ -203,7 +270,10 @@ void AnchorLayer::apply() {
 		_ownsTransparency = hidden;
 		_anchor->setAttribute(Qt::WA_TransparentForMouseEvents, hidden);
 	}
-	raise();
+	_drag = Drag();
+	refreshMovies();
+	refreshHits();
+	raiseAll();
 	_anchor->update();
 	update();
 }
@@ -215,14 +285,146 @@ QRect AnchorLayer::overlayRect(const Overlay &overlay) const {
 	return rect;
 }
 
-int AnchorLayer::overlayAt(QPoint point) const {
-	for (auto i = int(_overlays.size()); i != 0;) {
-		const auto &overlay = _overlays[--i];
-		if (overlay.callback.isObject() && overlayRect(overlay).contains(point)) {
-			return i;
+void AnchorLayer::refreshMovies() {
+	auto used = base::flat_set<QString>();
+	for (const auto &overlay : _overlays) {
+		if (!overlay.animation.isEmpty()) {
+			used.emplace(overlay.animation);
 		}
 	}
-	return -1;
+	for (auto i = begin(_movies); i != end(_movies);) {
+		if (!used.contains(i->first)) {
+			i = _movies.erase(i);
+		} else {
+			++i;
+		}
+	}
+	for (const auto &path : used) {
+		if (_movies.contains(path)) {
+			continue;
+		}
+		auto movie = std::make_unique<QMovie>(path);
+		QObject::connect(movie.get(), &QMovie::frameChanged, this, [=] {
+			update();
+		});
+		movie->start();
+		movie->setPaused(!isVisible());
+		_movies.emplace(path, std::move(movie));
+	}
+}
+
+void AnchorLayer::refreshHits() {
+	_hits.clear();
+	_hits.resize(_overlays.size());
+	for (auto i = 0; i != int(_overlays.size()); ++i) {
+		const auto &overlay = _overlays[i];
+		if (_hidden || (!overlay.draggable && !overlay.callback.isObject())) {
+			continue;
+		}
+		auto hit = base::make_unique_q<OverlayHit>(
+			_anchor,
+			[=](QEvent::Type type, QPoint global) {
+				hitEvent(i, type, global);
+			});
+		hit->setCursor(overlay.draggable
+			? Qt::OpenHandCursor
+			: Qt::PointingHandCursor);
+		hit->setGeometry(overlayRect(overlay));
+		hit->show();
+		_hits[i] = std::move(hit);
+	}
+}
+
+void AnchorLayer::raiseAll() {
+	raise();
+	for (const auto &hit : _hits) {
+		if (hit) {
+			hit->raise();
+		}
+	}
+}
+
+void AnchorLayer::hitEvent(int index, QEvent::Type type, QPoint global) {
+	if (index < 0 || index >= int(_overlays.size()) || !_hits[index]) {
+		return;
+	}
+	auto &overlay = _overlays[index];
+	const auto hit = _hits[index].get();
+	switch (type) {
+	case QEvent::MouseButtonPress:
+		_drag = Drag{
+			.index = index,
+			.start = global,
+			.origin = overlay.rect.topLeft(),
+		};
+		break;
+	case QEvent::MouseMove: {
+		if (_drag.index != index || !overlay.draggable) {
+			break;
+		}
+		const auto delta = global - _drag.start;
+		if (!_drag.moved
+			&& delta.manhattanLength() < QApplication::startDragDistance()) {
+			break;
+		}
+		if (!_drag.moved) {
+			_drag.moved = true;
+			hit->setCursor(Qt::ClosedHandCursor);
+		}
+		const auto size = overlayRect(overlay).size();
+		const auto position = QPoint(
+			std::clamp(
+				_drag.origin.x() + delta.x(),
+				0,
+				std::max(width() - size.width(), 0)),
+			std::clamp(
+				_drag.origin.y() + delta.y(),
+				0,
+				std::max(height() - size.height(), 0)));
+		overlay.rect.moveTopLeft(position);
+		hit->move(position);
+		update();
+	} break;
+	case QEvent::MouseButtonRelease: {
+		if (_drag.index != index) {
+			break;
+		}
+		const auto moved = _drag.moved;
+		_drag = Drag();
+		if (moved) {
+			hit->setCursor(Qt::OpenHandCursor);
+			InvokePluginCallback(overlay.pluginId, overlay.drag, {
+				{ u"anchor"_q, _name },
+				{ u"overlay"_q, overlay.id },
+				{ u"x"_q, overlay.rect.x() },
+				{ u"y"_q, overlay.rect.y() },
+			});
+		} else if (overlay.callback.isObject()) {
+			const auto local = _anchor->mapFromGlobal(global);
+			InvokePluginCallback(overlay.pluginId, overlay.callback, {
+				{ u"anchor"_q, _name },
+				{ u"overlay"_q, overlay.id },
+				{ u"x"_q, local.x() },
+				{ u"y"_q, local.y() },
+			});
+		}
+	} break;
+	default: break;
+	}
+}
+
+void AnchorLayer::showEvent(QShowEvent *e) {
+	RpWidget::showEvent(e);
+	for (const auto &[path, movie] : _movies) {
+		movie->setPaused(false);
+	}
+}
+
+void AnchorLayer::hideEvent(QHideEvent *e) {
+	RpWidget::hideEvent(e);
+	for (const auto &[path, movie] : _movies) {
+		movie->setPaused(true);
+	}
 }
 
 bool AnchorLayer::eventFilter(QObject *o, QEvent *e) {
@@ -232,11 +434,18 @@ bool AnchorLayer::eventFilter(QObject *o, QEvent *e) {
 	switch (e->type()) {
 	case QEvent::Resize:
 		setGeometry(_anchor->rect());
+		for (auto i = 0; i != int(_hits.size()); ++i) {
+			if (_hits[i]) {
+				_hits[i]->setGeometry(overlayRect(_overlays[i]));
+			}
+		}
 		_resize.callOnce(100);
 		break;
 	case QEvent::ChildAdded:
 		// Keep overlays above children added later.
-		crl::on_main(this, [=] { raise(); });
+		if (!dynamic_cast<OverlayHit*>(static_cast<QChildEvent*>(e)->child())) {
+			crl::on_main(this, [=] { raiseAll(); });
+		}
 		break;
 	case QEvent::Paint:
 		if (_background) {
@@ -245,23 +454,6 @@ bool AnchorLayer::eventFilter(QObject *o, QEvent *e) {
 			p.fillRect(_anchor->rect(), *_background);
 		}
 		break;
-	case QEvent::MouseButtonPress: {
-		// Clicks on plugin overlays don't reach the anchor itself.
-		const auto mouse = static_cast<QMouseEvent*>(e);
-		const auto index = (mouse->button() == Qt::LeftButton && !_hidden)
-			? overlayAt(mouse->pos())
-			: -1;
-		if (index >= 0) {
-			const auto &overlay = _overlays[index];
-			InvokePluginCallback(overlay.pluginId, overlay.callback, {
-				{ u"anchor"_q, _name },
-				{ u"overlay"_q, overlay.id },
-				{ u"x"_q, mouse->pos().x() },
-				{ u"y"_q, mouse->pos().y() },
-			});
-			return true;
-		}
-	} break;
 	case QEvent::MouseButtonRelease: {
 		const auto mouse = static_cast<QMouseEvent*>(e);
 		if (mouse->button() == Qt::LeftButton) {
@@ -291,16 +483,20 @@ void AnchorLayer::paintEvent(QPaintEvent *e) {
 			p.setBrush(*overlay.background);
 			p.drawRoundedRect(rect, overlay.radius, overlay.radius);
 		}
-		if (!overlay.image.isNull()) {
+		const auto movie = overlay.animation.isEmpty()
+			? nullptr
+			: _movies[overlay.animation].get();
+		const auto image = movie ? movie->currentImage() : overlay.image;
+		if (!image.isNull()) {
 			if (overlay.radius > 0) {
 				auto path = QPainterPath();
 				path.addRoundedRect(rect, overlay.radius, overlay.radius);
 				p.save();
 				p.setClipPath(path);
-				p.drawImage(rect, overlay.image);
+				p.drawImage(rect, image);
 				p.restore();
 			} else {
-				p.drawImage(rect, overlay.image);
+				p.drawImage(rect, image);
 			}
 		}
 		if (!overlay.text.isEmpty()) {
