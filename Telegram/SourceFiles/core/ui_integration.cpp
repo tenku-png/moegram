@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_integration.h"
 
+#include "moegram/ui/plugin_blur.h"
 #include "api/api_text_entities.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
@@ -484,6 +485,17 @@ bool UiIntegration::copyPreOnClick(const QVariant &context) {
 
 rpl::producer<> UiIntegration::forcePopupMenuHideRequests() {
 	return Core::App().passcodeLockChanges() | rpl::to_empty;
+}
+
+float64 UiIntegration::popupMenuOpacity() {
+	const auto blur = MoeGram::Ui::LookupBlur(u"menu"_q);
+	return blur ? blur->opacity : 1.;
+}
+
+QImage UiIntegration::popupMenuBackdrop(
+		not_null<QWidget*> menu,
+		QRect global) {
+	return MoeGram::Ui::MenuBackdrop(menu, global);
 }
 
 void UiIntegration::preparePopupMenu(not_null<QWidget*> widget) {

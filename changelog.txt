@@ -1,3 +1,15 @@
+1.0.1 (12.10.26)
+
+New for plugins:
+- A pill next to the chat search, and interval timers.
+- Theme colors on top of the current theme.
+- Items in the main menu and in the chat menu.
+- Badges, buttons and status line in the chat header.
+- Frosted glass for menus, chat header, composer and chat list header.
+- Motion blur effect on fast scroll (experimental).
+- Changing named parts of the window (ui.advanced permission).
+- Example plugins in docs/examples.
+
 1.0.0 beta (11.10.26)
 
 - First beta of moegram, based on AyuGram Desktop 7.2.9.
