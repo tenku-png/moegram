@@ -8,7 +8,7 @@ MoeGram is based on [ayugram-desktop](https://github.com/AyuGram/AyuGramDesktop)
 
 ## Install
 
-### Arch Linux and Arch-based (EndeavourOS, CachyOS, Manjaro...)
+### Arch Linux and Arch-based (EndeavourOS, CachyOS, Manjaro, Artix...)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/tenku-png/moegram/main/install.sh | sh

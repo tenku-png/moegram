@@ -24,9 +24,11 @@ if [ -r /etc/os-release ]; then
 	. /etc/os-release
 	distro="${ID:-} ${ID_LIKE:-}"
 fi
+# Some Arch-based distros (Artix, Parabola...) don't list "arch" in ID_LIKE,
+# so a pacman-based system counts as Arch-based too.
 case " $distro " in
-	*" arch "*) ;;
-	*) fail "this build only works on Arch Linux and Arch-based distros (EndeavourOS, CachyOS, Manjaro...). See README for other options." ;;
+	*" arch "* | *" artix "*) ;;
+	*) [ -f /etc/pacman.conf ] && command -v pacman >/dev/null 2>&1 || fail "this build only works on Arch Linux and Arch-based distros (EndeavourOS, CachyOS, Manjaro, Artix...). See README for other options." ;;
 esac
 
 for tool in curl makepkg pacman; do
